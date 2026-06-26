@@ -1,0 +1,21 @@
+# Godot local/editor state
+.godot/
+
+# Local environment and machine files
+.env
+.DS_Store
+*.tmp
+*.temp
+
+# Local Codex workspace files
+.codex/
+AGENTS.md
+
+# Build/export outputs
+export/
+exports/
+build/
+dist/
+
+# Logs
+*.log
