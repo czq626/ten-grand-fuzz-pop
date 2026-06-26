@@ -3,26 +3,38 @@ extends Control
 const BOARD_COLS := 9
 const BOARD_ROWS := 9
 const DESIGN_SIZE := Vector2(448, 960)
-const TILE_SIZE := 47.0
-const TILE_GAP := 1.0
-const BOARD_PADDING := 7.0
-const BOARD_TOP := 190.0
+const TILE_SIZE := 41.0
+const TILE_GAP := 4.0
+const BOARD_PADDING := 8.0
+const BOARD_TOP := 204.0
 const SCORE_TARGET := 10000
 const GOAL_TARGET := 24
 const SAVE_PATH := "user://save.cfg"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
 const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
 const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
+const UI_BOARD_FRAME_PATH := "res://assets/art/ui/ui_board_frame.png"
+const UI_POPUP_PANEL_PATH := "res://assets/art/ui/ui_popup_panel.png"
+const UI_PROGRESS_YELLOW_PATH := "res://assets/art/ui/ui_progress_yellow.png"
+const UI_PROGRESS_BLUE_PATH := "res://assets/art/ui/ui_progress_blue.png"
+const UI_PROGRESS_PINK_PATH := "res://assets/art/ui/ui_progress_pink.png"
+const UI_ICON_MENU_PATH := "res://assets/art/ui/ui_icon_menu.png"
+const UI_ICON_HINT_PATH := "res://assets/art/ui/ui_icon_hint.png"
+const UI_ICON_SHUFFLE_PATH := "res://assets/art/ui/ui_icon_shuffle.png"
+const UI_ICON_BLAST_PATH := "res://assets/art/ui/ui_icon_blast.png"
+const UI_ICON_PAINT_PATH := "res://assets/art/ui/ui_icon_paint.png"
+const UI_ICON_GOAL_PATH := "res://assets/art/ui/ui_icon_goal.png"
+const UI_ICON_FEVER_PATH := "res://assets/art/ui/ui_icon_fever.png"
 const MAX_FEVER := 100.0
 const POWERUP_SHUFFLE := "shuffle"
 const POWERUP_BLAST := "blast"
 const POWERUP_PAINT := "paint"
 const COLORS := [
-	Color("#f33348"),
-	Color("#ffcb2f"),
-	Color("#25c15f"),
-	Color("#3d4fe0"),
-	Color("#b62ee8")
+	Color("#ff5f73"),
+	Color("#ffd95a"),
+	Color("#48d987"),
+	Color("#5d85ff"),
+	Color("#c463ff")
 ]
 
 enum TileKind { NORMAL, BOMB, ROW_CLEAR, COLUMN_CLEAR, RAINBOW, BLOCKER }
@@ -32,6 +44,7 @@ var tile_nodes: Array = []
 var textures: Array[Texture2D] = []
 var badge_textures: Dictionary = {}
 var blocker_textures: Dictionary = {}
+var ui_textures: Dictionary = {}
 var rng := RandomNumberGenerator.new()
 var score := 0
 var high_score := SCORE_TARGET
@@ -73,6 +86,7 @@ var content_scale := 1.0
 var content_offset := Vector2.ZERO
 var board_origin := Vector2.ZERO
 var board_size := Vector2.ZERO
+var board_frame_art: TextureRect
 var board_layer: Node2D
 var fx_layer: Node2D
 var board_bump_tween: Tween
@@ -519,61 +533,76 @@ func _prepare_cluster_shift_match(row: int, color: int, offset: int) -> void:
 
 func _style_button(button: Button, accent: Color) -> void:
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color("#27183c")
-	normal.border_color = accent
-	normal.set_border_width_all(2)
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
+	normal.bg_color = Color("#fff6d9")
+	normal.border_color = accent.darkened(0.12)
+	normal.set_border_width_all(3)
+	normal.corner_radius_top_left = 12
+	normal.corner_radius_top_right = 12
+	normal.corner_radius_bottom_left = 12
+	normal.corner_radius_bottom_right = 12
+	normal.shadow_color = Color(0.47, 0.23, 0.16, 0.24)
+	normal.shadow_size = 5
+	normal.shadow_offset = Vector2(0, 4)
 	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = Color("#3b2454")
+	hover.bg_color = Color("#ffffff")
 	var pressed := normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = accent.darkened(0.35)
+	pressed.bg_color = accent.lightened(0.28)
+	pressed.shadow_offset = Vector2(0, 1)
+	pressed.shadow_size = 2
 	var disabled := normal.duplicate() as StyleBoxFlat
-	disabled.bg_color = Color("#140d20")
-	disabled.border_color = Color("#4c4059")
+	disabled.bg_color = Color("#dfd8c9")
+	disabled.border_color = Color("#b9aa9d")
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
 	button.add_theme_stylebox_override("disabled", disabled)
-	button.add_theme_color_override("font_color", Color.WHITE)
-	button.add_theme_color_override("font_disabled_color", Color("#8c8494"))
-	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_color_override("font_color", Color("#6f3b39"))
+	button.add_theme_color_override("font_hover_color", Color("#4f2b2b"))
+	button.add_theme_color_override("font_pressed_color", Color("#4f2b2b"))
+	button.add_theme_color_override("font_disabled_color", Color("#978c84"))
+	button.add_theme_font_size_override("font_size", 15)
 
 
 func _style_powerup_button(button: Button, accent: Color, armed: bool, disabled: bool) -> void:
 	var normal := StyleBoxFlat.new()
-	normal.bg_color = accent.darkened(0.48) if armed else Color("#27183c")
-	normal.border_color = Color.WHITE if armed else accent
+	normal.bg_color = accent.lightened(0.28) if armed else Color("#fff6dc")
+	normal.border_color = Color("#ffffff") if armed else accent.darkened(0.12)
 	normal.set_border_width_all(3 if armed else 2)
-	normal.corner_radius_top_left = 6
-	normal.corner_radius_top_right = 6
-	normal.corner_radius_bottom_left = 6
-	normal.corner_radius_bottom_right = 6
+	normal.corner_radius_top_left = 16
+	normal.corner_radius_top_right = 16
+	normal.corner_radius_bottom_left = 16
+	normal.corner_radius_bottom_right = 16
+	normal.shadow_color = Color(0.49, 0.25, 0.16, 0.22)
+	normal.shadow_size = 7
+	normal.shadow_offset = Vector2(0, 5)
 	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = accent.darkened(0.34) if armed else Color("#3b2454")
+	hover.bg_color = accent.lightened(0.42) if armed else Color("#ffffff")
 	var pressed := normal.duplicate() as StyleBoxFlat
-	pressed.bg_color = accent.darkened(0.24)
+	pressed.bg_color = accent.lightened(0.18)
+	pressed.shadow_offset = Vector2(0, 2)
+	pressed.shadow_size = 3
 	var disabled_style := normal.duplicate() as StyleBoxFlat
-	disabled_style.bg_color = Color("#120d1a")
-	disabled_style.border_color = Color("#4a4054")
+	disabled_style.bg_color = Color("#e2d9cc")
+	disabled_style.border_color = Color("#b7a89a")
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", hover)
 	button.add_theme_stylebox_override("pressed", pressed)
 	button.add_theme_stylebox_override("disabled", disabled_style)
-	button.add_theme_color_override("font_color", Color("#fff9bd") if armed else Color.WHITE)
-	button.add_theme_color_override("font_disabled_color", Color("#746a82") if disabled else Color("#fff9bd"))
+	button.add_theme_color_override("font_color", Color("#5c3331"))
+	button.add_theme_color_override("font_hover_color", Color("#402426"))
+	button.add_theme_color_override("font_pressed_color", Color("#402426"))
+	button.add_theme_color_override("font_disabled_color", Color("#95877e") if disabled else Color("#5c3331"))
+	button.add_theme_font_size_override("font_size", 14)
 
 
 func _powerup_accent(powerup: String) -> Color:
 	match powerup:
 		POWERUP_BLAST:
-			return Color("#ff606d")
+			return Color("#ff6c7e")
 		POWERUP_PAINT:
-			return Color("#68f3ff")
+			return Color("#66d8ff")
 		_:
-			return Color("#ffda36")
+			return Color("#ffd45d")
 
 
 func _input(event: InputEvent) -> void:
@@ -649,7 +678,7 @@ func _build_interface() -> void:
 	var bg := ColorRect.new()
 	bg.name = "Backplate"
 	bg.size = DESIGN_SIZE
-	bg.color = Color("#150f27")
+	bg.color = Color("#ffe7b8")
 	content_root.add_child(bg)
 
 	var bg_art := TextureRect.new()
@@ -658,7 +687,7 @@ func _build_interface() -> void:
 	bg_art.size = DESIGN_SIZE
 	bg_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	bg_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	bg_art.modulate = Color(0.82, 0.82, 0.9, 0.72)
+	bg_art.modulate = Color(1.0, 0.86, 0.74, 0.18)
 	content_root.add_child(bg_art)
 
 	backdrop = Control.new()
@@ -669,25 +698,27 @@ func _build_interface() -> void:
 
 	var top_bar := HBoxContainer.new()
 	top_bar.name = "TopBar"
-	top_bar.position = Vector2(8, 8)
-	top_bar.size = Vector2(432, 34)
+	top_bar.position = Vector2(14, 12)
+	top_bar.size = Vector2(420, 38)
 	top_bar.add_theme_constant_override("separation", 8)
 	content_root.add_child(top_bar)
 
 	restart_button = Button.new()
-	restart_button.text = "MENU"
+	restart_button.text = "菜单"
+	restart_button.custom_minimum_size = Vector2(52, 42)
 	restart_button.focus_mode = Control.FOCUS_NONE
 	restart_button.pressed.connect(_show_pause_menu)
 	_style_button(restart_button, Color("#ffd23f"))
 	top_bar.add_child(restart_button)
 
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(292, 1)
+	spacer.custom_minimum_size = Vector2(268, 1)
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_bar.add_child(spacer)
 
 	hint_button = Button.new()
-	hint_button.text = "HINT"
+	hint_button.text = "提示"
+	hint_button.custom_minimum_size = Vector2(52, 42)
 	hint_button.focus_mode = Control.FOCUS_NONE
 	hint_button.pressed.connect(_show_hint)
 	_style_button(hint_button, Color("#7df8ff"))
@@ -695,127 +726,130 @@ func _build_interface() -> void:
 
 	title_label = Label.new()
 	title_label.name = "TitleLabel"
-	title_label.text = "FUZZ POP"
-	title_label.position = Vector2(20, 46)
-	title_label.size = Vector2(150, 28)
-	title_label.add_theme_font_size_override("font_size", 23)
-	title_label.add_theme_color_override("font_color", Color("#fff6c7"))
-	title_label.add_theme_color_override("font_shadow_color", Color("#39113d"))
+	title_label.text = "软糖毛球"
+	title_label.position = Vector2(22, 58)
+	title_label.size = Vector2(170, 34)
+	title_label.add_theme_font_size_override("font_size", 25)
+	title_label.add_theme_color_override("font_color", Color("#7e3f47"))
+	title_label.add_theme_color_override("font_shadow_color", Color("#fff4c9"))
 	title_label.add_theme_constant_override("shadow_offset_x", 2)
 	title_label.add_theme_constant_override("shadow_offset_y", 2)
 	content_root.add_child(title_label)
 
 	level_label = Label.new()
 	level_label.name = "LevelLabel"
-	level_label.text = "STAGE %d" % stage
-	level_label.position = Vector2(310, 50)
+	level_label.text = "第%d关" % stage
+	level_label.position = Vector2(312, 58)
 	level_label.size = Vector2(112, 24)
 	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	level_label.add_theme_font_size_override("font_size", 17)
-	level_label.add_theme_color_override("font_color", Color("#93fff1"))
+	level_label.add_theme_font_size_override("font_size", 18)
+	level_label.add_theme_color_override("font_color", Color("#2e91b8"))
 	content_root.add_child(level_label)
 
 	best_label = Label.new()
 	best_label.name = "BestLabel"
-	best_label.text = "BEST 0"
-	best_label.position = Vector2(300, 76)
+	best_label.text = "最佳 0"
+	best_label.position = Vector2(286, 82)
 	best_label.size = Vector2(122, 20)
 	best_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	best_label.add_theme_font_size_override("font_size", 12)
-	best_label.add_theme_color_override("font_color", Color("#c9b8ff"))
+	best_label.add_theme_color_override("font_color", Color("#8f6865"))
 	content_root.add_child(best_label)
 
 	var orb_holder := Control.new()
 	orb_holder.name = "PrizeOrb"
-	orb_holder.position = Vector2(176, 42)
-	orb_holder.size = Vector2(96, 96)
+	orb_holder.position = Vector2(181, 44)
+	orb_holder.size = Vector2(86, 86)
 	content_root.add_child(orb_holder)
 	orb_holder.draw.connect(_draw_prize_orb.bind(orb_holder))
 
 	target_bar = TextureProgressBar.new()
 	target_bar.name = "TargetBar"
-	target_bar.position = Vector2(154, 137)
-	target_bar.size = Vector2(138, 22)
+	target_bar.position = Vector2(154, 150)
+	target_bar.size = Vector2(140, 20)
 	target_bar.min_value = 0
 	target_bar.max_value = high_score
 	target_bar.value = 0
-	target_bar.tint_progress = Color("#d52330")
-	target_bar.tint_under = Color("#05040a")
+	target_bar.tint_progress = Color("#ff6c7e")
+	target_bar.tint_under = Color("#fff2d1")
 	content_root.add_child(target_bar)
 
 	score_progress_label = Label.new()
 	score_progress_label.name = "ScoreProgressLabel"
-	score_progress_label.position = Vector2(154, 139)
-	score_progress_label.size = Vector2(138, 18)
+	score_progress_label.position = Vector2(154, 150)
+	score_progress_label.size = Vector2(140, 20)
 	score_progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_progress_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	score_progress_label.add_theme_font_size_override("font_size", 10)
-	score_progress_label.add_theme_color_override("font_color", Color("#ffe9d2"))
-	score_progress_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	score_progress_label.add_theme_color_override("font_color", Color("#7a4a45"))
+	score_progress_label.add_theme_color_override("font_shadow_color", Color("#fff5d8"))
 	score_progress_label.add_theme_constant_override("shadow_offset_x", 1)
 	score_progress_label.add_theme_constant_override("shadow_offset_y", 1)
 	content_root.add_child(score_progress_label)
 
 	score_label = Label.new()
 	score_label.name = "ScoreLabel"
-	score_label.position = Vector2(145, 112)
-	score_label.size = Vector2(156, 26)
+	score_label.position = Vector2(142, 128)
+	score_label.size = Vector2(164, 26)
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	score_label.add_theme_font_size_override("font_size", 18)
-	score_label.add_theme_color_override("font_color", Color.WHITE)
-	score_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+	score_label.add_theme_color_override("font_color", Color("#6f3b39"))
+	score_label.add_theme_color_override("font_shadow_color", Color("#fff1bc"))
 	score_label.add_theme_constant_override("shadow_offset_x", 2)
 	score_label.add_theme_constant_override("shadow_offset_y", 2)
 	content_root.add_child(score_label)
 
 	moves_label = Label.new()
 	moves_label.name = "MovesLabel"
-	moves_label.position = Vector2(18, 102)
-	moves_label.size = Vector2(82, 58)
+	moves_label.position = Vector2(23, 111)
+	moves_label.size = Vector2(86, 60)
 	moves_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	moves_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	moves_label.add_theme_font_size_override("font_size", 18)
-	moves_label.add_theme_color_override("font_color", Color("#f6ecff"))
+	moves_label.add_theme_color_override("font_color", Color("#6f3b39"))
 	content_root.add_child(moves_label)
 
 	goal_label = Label.new()
 	goal_label.name = "GoalLabel"
-	goal_label.position = Vector2(302, 102)
-	goal_label.size = Vector2(128, 58)
+	goal_label.position = Vector2(305, 111)
+	goal_label.size = Vector2(124, 60)
 	goal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	goal_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	goal_label.add_theme_font_size_override("font_size", 17)
-	goal_label.add_theme_color_override("font_color", Color("#fff4ad"))
+	goal_label.add_theme_color_override("font_color", Color("#6f3b39"))
 	content_root.add_child(goal_label)
 
 	status_label = Label.new()
 	status_label.name = "StatusLabel"
-	status_label.position = Vector2(80, 674)
+	status_label.position = Vector2(62, 668)
 	status_label.size = Vector2(288, 28)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.add_theme_font_size_override("font_size", 16)
-	status_label.add_theme_color_override("font_color", Color("#d8fff9"))
+	status_label.add_theme_color_override("font_color", Color("#7e3f47"))
 	content_root.add_child(status_label)
 
 	mission_label = Label.new()
 	mission_label.name = "MissionLabel"
-	mission_label.text = "Rotate rows/columns to make 3+ connected."
-	mission_label.position = Vector2(40, 712)
+	mission_label.text = "拖动整行或整列，连成3个以上同色毛球。"
+	mission_label.position = Vector2(40, 714)
 	mission_label.size = Vector2(368, 22)
 	mission_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mission_label.add_theme_font_size_override("font_size", 13)
-	mission_label.add_theme_color_override("font_color", Color("#bfaee8"))
+	mission_label.add_theme_color_override("font_color", Color("#8f6865"))
 	content_root.add_child(mission_label)
 
 	combo_label = Label.new()
 	combo_label.name = "ComboLabel"
-	combo_label.position = Vector2(164, 160)
+	combo_label.position = Vector2(164, 171)
 	combo_label.size = Vector2(120, 24)
 	combo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	combo_label.add_theme_font_size_override("font_size", 16)
-	combo_label.add_theme_color_override("font_color", Color("#ffe767"))
+	combo_label.add_theme_font_size_override("font_size", 15)
+	combo_label.add_theme_color_override("font_color", Color("#f47a5b"))
 	content_root.add_child(combo_label)
+
+	board_frame_art = _make_texture_rect(_ui_texture("board"), Vector2.ZERO, board_size + Vector2(44, 52), "BoardFrameArt")
+	content_root.add_child(board_frame_art)
 
 	board_layer = Node2D.new()
 	board_layer.name = "BoardLayer"
@@ -827,86 +861,88 @@ func _build_interface() -> void:
 
 	goal_bar = TextureProgressBar.new()
 	goal_bar.name = "GoalProgressBar"
-	goal_bar.position = Vector2(72, 752)
+	goal_bar.position = Vector2(84, 756)
 	goal_bar.size = Vector2(328, 14)
 	goal_bar.min_value = 0
 	goal_bar.max_value = goal_target
 	goal_bar.value = 0
-	goal_bar.tint_under = Color("#16111f")
+	goal_bar.tint_under = Color("#fff1d6")
 	goal_bar.tint_progress = Color("#b62ee8")
+	goal_bar.modulate = Color(1, 1, 1, 0.0)
 	content_root.add_child(goal_bar)
 
 	var goal_progress_label := Label.new()
 	goal_progress_label.name = "GoalProgressLabel"
-	goal_progress_label.text = "GOAL"
-	goal_progress_label.position = Vector2(26, 747)
-	goal_progress_label.size = Vector2(46, 24)
+	goal_progress_label.text = "目标"
+	goal_progress_label.position = Vector2(34, 750)
+	goal_progress_label.size = Vector2(48, 24)
 	goal_progress_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	goal_progress_label.add_theme_font_size_override("font_size", 12)
-	goal_progress_label.add_theme_color_override("font_color", Color("#fff4ad"))
+	goal_progress_label.add_theme_color_override("font_color", Color("#7e3f47"))
 	content_root.add_child(goal_progress_label)
 
 	goal_progress_value_label = Label.new()
 	goal_progress_value_label.name = "GoalProgressValue"
-	goal_progress_value_label.position = Vector2(300, 736)
-	goal_progress_value_label.size = Vector2(100, 16)
+	goal_progress_value_label.position = Vector2(292, 737)
+	goal_progress_value_label.size = Vector2(120, 16)
 	goal_progress_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	goal_progress_value_label.add_theme_font_size_override("font_size", 11)
-	goal_progress_value_label.add_theme_color_override("font_color", Color("#fff4ad"))
+	goal_progress_value_label.add_theme_color_override("font_color", Color("#7e3f47"))
 	content_root.add_child(goal_progress_value_label)
 
 	fever_bar = TextureProgressBar.new()
 	fever_bar.name = "FeverBar"
-	fever_bar.position = Vector2(72, 780)
+	fever_bar.position = Vector2(84, 786)
 	fever_bar.size = Vector2(328, 22)
 	fever_bar.min_value = 0
 	fever_bar.max_value = 100
 	fever_bar.value = 0
-	fever_bar.tint_under = Color("#16111f")
-	fever_bar.tint_progress = Color("#fb2147")
+	fever_bar.tint_under = Color("#fff1d6")
+	fever_bar.tint_progress = Color("#ff8b4e")
+	fever_bar.modulate = Color(1, 1, 1, 0.0)
 	content_root.add_child(fever_bar)
 
 	var fever_label := Label.new()
 	fever_label.name = "FeverLabel"
-	fever_label.text = "FEVER"
-	fever_label.position = Vector2(26, 778)
-	fever_label.size = Vector2(46, 24)
+	fever_label.text = "热力"
+	fever_label.position = Vector2(34, 784)
+	fever_label.size = Vector2(48, 24)
 	fever_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	fever_label.add_theme_font_size_override("font_size", 12)
-	fever_label.add_theme_color_override("font_color", Color("#ffe767"))
+	fever_label.add_theme_color_override("font_color", Color("#7e3f47"))
 	content_root.add_child(fever_label)
 
 	fever_value_label = Label.new()
 	fever_value_label.name = "FeverValue"
-	fever_value_label.position = Vector2(300, 765)
+	fever_value_label.position = Vector2(312, 770)
 	fever_value_label.size = Vector2(100, 16)
 	fever_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	fever_value_label.add_theme_font_size_override("font_size", 11)
-	fever_value_label.add_theme_color_override("font_color", Color("#ffb6c7"))
+	fever_value_label.add_theme_color_override("font_color", Color("#d75d64"))
 	content_root.add_child(fever_value_label)
 
 	var bottom_bar := HBoxContainer.new()
 	bottom_bar.name = "PowerupBar"
-	bottom_bar.position = Vector2(38, 819)
-	bottom_bar.size = Vector2(396, 44)
-	bottom_bar.add_theme_constant_override("separation", 10)
+	bottom_bar.position = Vector2(34, 822)
+	bottom_bar.size = Vector2(380, 58)
+	bottom_bar.add_theme_constant_override("separation", 8)
 	content_root.add_child(bottom_bar)
 
-	shuffle_button = _make_powerup_button("REMIX", POWERUP_SHUFFLE)
-	blast_button = _make_powerup_button("BLAST", POWERUP_BLAST)
-	paint_button = _make_powerup_button("PAINT", POWERUP_PAINT)
+	shuffle_button = _make_powerup_button("重排", POWERUP_SHUFFLE)
+	blast_button = _make_powerup_button("爆破", POWERUP_BLAST)
+	paint_button = _make_powerup_button("染色", POWERUP_PAINT)
 	bottom_bar.add_child(shuffle_button)
 	bottom_bar.add_child(blast_button)
 	bottom_bar.add_child(paint_button)
 
 	var reward_label := Label.new()
 	reward_label.name = "RewardLabel"
-	reward_label.text = "FEVER rewards bonus BLAST or PAINT"
-	reward_label.position = Vector2(42, 870)
+	reward_label.text = "热力满格会奖励爆破或染色"
+	reward_label.position = Vector2(42, 884)
 	reward_label.size = Vector2(364, 24)
 	reward_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	reward_label.add_theme_font_size_override("font_size", 12)
-	reward_label.add_theme_color_override("font_color", Color("#8cf9ff"))
+	reward_label.add_theme_color_override("font_color", Color("#2e91b8"))
 	content_root.add_child(reward_label)
 
 	overlay_layer = Control.new()
@@ -947,14 +983,31 @@ func _texture_fit_scale(texture: Texture2D, target_size: float) -> Vector2:
 	return Vector2(fit, fit)
 
 
+func _make_texture_rect(texture: Texture2D, pos: Vector2, size: Vector2, name: String = "") -> TextureRect:
+	var rect := TextureRect.new()
+	rect.name = name
+	rect.texture = texture
+	rect.position = pos
+	rect.size = size
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return rect
+
+
+func _ui_texture(key: String) -> Texture2D:
+	return ui_textures.get(key, null) as Texture2D
+
+
 func _make_powerup_button(label: String, powerup: String) -> Button:
 	var button := Button.new()
 	button.text = label
-	button.custom_minimum_size = Vector2(122, 42)
+	button.custom_minimum_size = Vector2(120, 56)
+	button.clip_contents = true
 	button.focus_mode = Control.FOCUS_NONE
 	button.pressed.connect(_arm_powerup.bind(powerup))
 	button.set_meta("powerup", powerup)
-	_style_button(button, _powerup_accent(powerup))
+	_style_powerup_button(button, _powerup_accent(powerup), false, false)
 	return button
 
 
@@ -973,6 +1026,10 @@ func _layout_root() -> void:
 	content_root.position = content_offset
 	content_root.scale = Vector2(content_scale, content_scale)
 	board_origin = Vector2((448.0 - board_size.x) * 0.5, BOARD_TOP)
+	if is_instance_valid(board_frame_art):
+		board_frame_art.visible = false
+		board_frame_art.size = board_size + Vector2(44, 52)
+		board_frame_art.position = board_origin - Vector2(22, 28)
 	board_layer.position = board_origin
 	fx_layer.position = board_origin
 
@@ -1038,22 +1095,22 @@ func _show_pause_menu() -> void:
 	if busy and not ended:
 		return
 	busy = true
-	var card := _make_overlay_card("PAUSED", "Best %d\n%s" % [best_score, _pause_goal_line()], "")
-	card.position = Vector2(44, 344)
+	var card := _make_overlay_card("暂停", "最佳分 %d\n%s" % [best_score, _pause_goal_line()], "")
+	card.position = Vector2(64, 374)
 	overlay_layer.add_child(card)
-	var resume := _make_overlay_button("CLOSE" if ended else "RESUME", Vector2(72, 470), func() -> void:
+	var resume := _make_overlay_button("关闭" if ended else "继续", Vector2(82, 506), func() -> void:
 		card.queue_free()
 		if not ended:
 			busy = false
 	)
-	var restart := _make_overlay_button("RESTART", Vector2(172, 470), func() -> void:
+	var restart := _make_overlay_button("重开", Vector2(181, 506), func() -> void:
 		_clear_overlay()
 		_new_game()
 	)
-	var next := _make_overlay_button("NEXT", Vector2(272, 470), func() -> void:
+	var next := _make_overlay_button("下一关", Vector2(280, 506), func() -> void:
 		_next_stage()
 	)
-	var help := _make_overlay_button("HELP", Vector2(172, 512), func() -> void:
+	var help := _make_overlay_button("玩法", Vector2(181, 548), func() -> void:
 		_clear_overlay()
 		_show_help_card()
 	)
@@ -1066,13 +1123,13 @@ func _show_pause_menu() -> void:
 func _show_help_card() -> void:
 	busy = true
 	var card := _make_overlay_card(
-		"HOW TO PLAY",
-		"Drag one row or column to rotate it\nMake 3+ connected same color to pop\nwood crates crack beside matches",
-		"Connected groups can chain"
+		"玩法说明",
+		"拖动一整行或一整列进行循环移动\n同色毛球上下左右连成3个以上就会消除\n木箱会被旁边的消除震裂",
+		"连锁消除会自动继续"
 	)
-	card.position = Vector2(44, 330)
+	card.position = Vector2(64, 360)
 	overlay_layer.add_child(card)
-	var back := _make_overlay_button("BACK", Vector2(181, 506), func() -> void:
+	var back := _make_overlay_button("返回", Vector2(181, 548), func() -> void:
 		_clear_overlay()
 		_show_pause_menu()
 	)
@@ -1101,27 +1158,27 @@ func _arm_powerup(powerup: String) -> void:
 	match powerup:
 		POWERUP_SHUFFLE:
 			if shuffle_charges <= 0:
-				_flash_status("No remix left")
+				_flash_status("重排次数用完了")
 				return
 			shuffle_charges -= 1
 			armed_powerup = ""
-			_flash_status("Board remixed")
+			_flash_status("棋盘已重排")
 			_play_sfx("power")
 			_remix_board()
 			_update_hud()
 			await _animate_drop()
 		POWERUP_BLAST:
 			if blast_charges <= 0:
-				_flash_status("No blast left")
+				_flash_status("爆破次数用完了")
 				return
 			armed_powerup = POWERUP_BLAST
-			_flash_status("Choose a tile to blast")
+			_flash_status("选择一个格子爆破")
 		POWERUP_PAINT:
 			if paint_charges <= 0:
-				_flash_status("No paint left")
+				_flash_status("染色次数用完了")
 				return
 			armed_powerup = POWERUP_PAINT
-			_flash_status("Choose a group to paint goal color")
+			_flash_status("选择一组毛球染成目标色")
 	_update_hud()
 
 
@@ -1153,7 +1210,7 @@ func _use_armed_powerup(cell: Vector2i) -> void:
 			armed_powerup = ""
 			fever = min(MAX_FEVER, fever + paint_cells.size() * 2.0)
 			_play_sfx("power")
-			_flash_status("Painted %d fuzzies" % paint_cells.size())
+			_flash_status("已染色 %d 个毛球" % paint_cells.size())
 	_update_hud()
 
 
@@ -1249,17 +1306,25 @@ func _filled_same_color_cluster_size(start: Vector2i, color: int, visited: Dicti
 func _make_tile_node(tile: Dictionary) -> Node2D:
 	var root := Node2D.new()
 	root.set_meta("tile", tile)
+	var shadow := Sprite2D.new()
+	shadow.name = "Shadow"
+	shadow.texture = textures[tile.color]
+	shadow.position = Vector2(0, 4)
+	shadow.scale = Vector2(0.90, 0.84)
+	shadow.modulate = Color(0.28, 0.15, 0.12, 0.24)
+	root.add_child(shadow)
+
 	var glow := Sprite2D.new()
 	glow.name = "Glow"
 	glow.texture = textures[tile.color]
-	glow.scale = Vector2(1.02, 1.02)
+	glow.scale = Vector2(1.08, 1.08)
 	glow.modulate = Color(1, 1, 1, 0.0)
 	root.add_child(glow)
 
 	var sprite := Sprite2D.new()
 	sprite.name = "Sprite"
 	sprite.texture = textures[tile.color]
-	sprite.scale = Vector2(0.92, 0.92)
+	sprite.scale = Vector2(0.88, 0.88)
 	root.add_child(sprite)
 
 	var ring := Sprite2D.new()
@@ -1303,7 +1368,12 @@ func _update_tile_node(cell: Vector2i) -> void:
 	var sprite: Sprite2D = node.get_node("Sprite")
 	sprite.texture = textures[int(tile.color)]
 	sprite.modulate = Color.WHITE
-	sprite.scale = Vector2(0.92, 0.92)
+	sprite.scale = Vector2(0.88, 0.88)
+	var shadow: Sprite2D = node.get_node("Shadow")
+	shadow.texture = textures[int(tile.color)]
+	shadow.position = Vector2(0, 4)
+	shadow.scale = Vector2(0.90, 0.84)
+	shadow.modulate = Color(0.28, 0.15, 0.12, 0.24)
 	var marker: Label = node.get_node("Marker")
 	var badge: Sprite2D = node.get_node("Badge")
 	var ring: Sprite2D = node.get_node("Ring")
@@ -1353,9 +1423,12 @@ func _update_tile_node(cell: Vector2i) -> void:
 			marker.text = ""
 			sprite.texture = blocker_textures["full"] if blocker_hp > 1 else blocker_textures["damaged"]
 			sprite.modulate = Color.WHITE
-			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.96)
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.88)
+			shadow.texture = sprite.texture
+			shadow.scale = _texture_fit_scale(shadow.texture, TILE_SIZE * 0.90)
+			shadow.modulate = Color(0.30, 0.16, 0.08, 0.28)
 			glow.texture = sprite.texture
-			glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.08)
+			glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.02)
 			glow.modulate = Color(1.0, 0.55, 0.24, 0.28)
 			ring.texture = badge_textures[TileKind.BLOCKER]
 			ring.scale = Vector2(1.9, 1.9)
@@ -1372,7 +1445,7 @@ func _try_pop(cell: Vector2i) -> void:
 	if target.kind == TileKind.BLOCKER:
 		_play_sfx("bad")
 		_shake(cell)
-		_flash_status("Break blockers with nearby pops")
+		_flash_status("在木箱旁消除就能震裂它")
 		return
 	var group := _collect_group(cell)
 	if target.kind == TileKind.RAINBOW:
@@ -1412,16 +1485,16 @@ func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: 
 		gained += cells.size() * 25
 		if cells.size() >= 10:
 			blast_charges += 1
-			_flash_status("Mega pop! BLAST +1")
+			_flash_status("超大消除！爆破+1")
 		elif cells.size() >= 8:
 			shuffle_charges += 1
-			_flash_status("Mega pop! REMIX +1")
+			_flash_status("超大消除！重排+1")
 		else:
-			_flash_status("Mega pop!")
+			_flash_status("超大消除！")
 		_board_bump()
 	elif goal_gain > 0:
 		_play_sfx("pop")
-		_flash_status("Goal +%d" % goal_gain)
+		_flash_status("目标 +%d" % goal_gain)
 	else:
 		_play_sfx("pop")
 	score += gained
@@ -1433,7 +1506,7 @@ func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: 
 		_update_tile_node(damaged)
 		_pulse_tile(damaged)
 		_spawn_crate_splinters(damaged)
-		_spawn_milestone_text(board_origin + _tile_position(damaged.x, damaged.y), "CRACK", Color("#ffb6f2"))
+		_spawn_milestone_text(board_origin + _tile_position(damaged.x, damaged.y), "裂开", Color("#ff7f91"))
 	await _pop_cells(cells)
 	_apply_gravity()
 	_refill_board()
@@ -1446,7 +1519,7 @@ func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: 
 		await _end_game()
 		return
 	if not _has_any_move():
-		status_label.text = "Fresh Mix!"
+		status_label.text = "自动重排！"
 		_remix_board()
 		await _animate_drop()
 	if moves <= 0:
@@ -1679,7 +1752,7 @@ func _preview_shift_origin(cell: Vector2i) -> void:
 	drag_steps = 0
 	_highlight_shift_line("row", cell.y, Color(1.0, 0.95, 0.35, 0.18))
 	_highlight_shift_line("col", cell.x, Color(0.35, 0.95, 1.0, 0.18))
-	status_label.text = "Drag row or column"
+	status_label.text = "拖动整行或整列"
 
 
 func _update_line_drag_preview(pos: Vector2) -> void:
@@ -1697,7 +1770,7 @@ func _update_line_drag_preview(pos: Vector2) -> void:
 	var offset_amount := (delta.x if drag_axis == "row" else delta.y) / content_scale
 	_apply_shift_preview(drag_origin, drag_axis, offset_amount)
 	var arrow := ("<" if drag_steps < 0 else ">") if drag_axis == "row" else ("^" if drag_steps < 0 else "v")
-	status_label.text = "%s Shift %s %s%d" % [arrow, ("row" if drag_axis == "row" else "column"), ("+" if drag_steps >= 0 else ""), drag_steps]
+	status_label.text = "%s 移动%s %s%d" % [arrow, ("行" if drag_axis == "row" else "列"), ("+" if drag_steps >= 0 else ""), drag_steps]
 
 
 func _apply_shift_preview(origin: Vector2i, axis: String, offset_amount: float) -> void:
@@ -1780,10 +1853,10 @@ func _set_node_drag_glow(node: Node2D, color: Color) -> void:
 	var sprite: Sprite2D = node.get_node("Sprite")
 	var tile: Dictionary = node.get_meta("tile", {})
 	if int(tile.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
-		sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.02)
-		glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.14)
+		sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.96)
+		glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.08)
 	else:
-		sprite.scale = Vector2(0.98, 0.98)
+		sprite.scale = Vector2(0.96, 0.96)
 
 
 func _wrap_cycle_steps(raw_steps: int, size: int) -> int:
@@ -1931,7 +2004,7 @@ func _resolve_matches_after_shift() -> void:
 	last_resolution_chain_count = 0
 	if matches.is_empty():
 		combo = 0
-		_flash_status("No match")
+		_flash_status("没有可消除组合")
 		_update_hud()
 		if moves <= 0:
 			await _end_game()
@@ -2069,7 +2142,7 @@ func _preview_group(cell: Vector2i) -> void:
 		sprite.scale = Vector2(1.06, 1.06)
 		sprite.modulate = Color("#fff7bd")
 		node.position = _tile_position(selected.x, selected.y) + Vector2(0, -2)
-	status_label.text = "%d fuzzies" % selected_cells.size()
+	status_label.text = "%d 个毛球" % selected_cells.size()
 
 
 func _clear_selection() -> void:
@@ -2086,14 +2159,14 @@ func _show_hint() -> void:
 		return
 	var hint := _find_shift_hint()
 	if hint.is_empty():
-		status_label.text = "No obvious shift"
+		status_label.text = "暂时没有明显提示"
 		return
 	var axis: String = hint["axis"]
 	var index: int = int(hint["index"])
 	var steps: int = int(hint["steps"])
 	_highlight_line(axis, index)
-	status_label.text = "Try %s %d %+d" % [axis, index + 1, steps]
-	mission_label.text = "Rotate the highlighted line to make 3+."
+	status_label.text = "试试第%d%s %+d" % [index + 1, "行" if axis == "row" else "列", steps]
+	mission_label.text = "移动高亮线，连出3个以上同色毛球。"
 
 
 func _find_shift_hint() -> Dictionary:
@@ -2176,9 +2249,9 @@ func _end_game() -> void:
 func _show_start_card() -> void:
 	busy = true
 	var card := _make_overlay_card(
-		"STAGE %d" % stage,
+		"第%d关" % stage,
 		"%s\n%s" % [_stage_brief_line(), _stage_rule_line()],
-		"Goal color and score both count"
+		"目标色和分数都要达成"
 	)
 	overlay_layer.add_child(card)
 	card.position = Vector2(54, 320)
@@ -2196,19 +2269,19 @@ func _show_start_card() -> void:
 func _make_result_card(win: bool) -> Control:
 	var stars := _star_count()
 	var footer := _failure_tip() if not win else "%s %s  %s" % [_star_string(stars), _star_rank_name(stars), _stage_reward_line(stars)]
-	var result_line := "Moves left %d" % moves if win else _failure_reason()
+	var result_line := "剩余步数 %d" % moves if win else _failure_reason()
 	var body := _result_body(result_line)
-	var card := _make_overlay_card("STAGE CLEAR" if win else "OUT OF MOVES", body, footer)
-	card.position = Vector2(44, 344)
+	var card := _make_overlay_card("闯关成功" if win else "步数用完", body, footer)
+	card.position = Vector2(64, 370)
 	overlay_layer.add_child(card)
-	var primary := _make_overlay_button("NEXT" if win else "RETRY", Vector2(128, 526), func() -> void:
+	var primary := _make_overlay_button("下一关" if win else "再试", Vector2(136, 562), func() -> void:
 		if win:
 			_next_stage()
 		else:
 			_clear_overlay()
 			_new_game()
 	)
-	var menu := _make_overlay_button("MENU", Vector2(232, 526), func() -> void:
+	var menu := _make_overlay_button("菜单", Vector2(226, 562), func() -> void:
 		_clear_overlay()
 		_show_pause_menu()
 	)
@@ -2219,41 +2292,40 @@ func _make_result_card(win: bool) -> Control:
 
 func _make_overlay_card(title: String, body: String, footer: String) -> Control:
 	var panel := Control.new()
-	panel.size = Vector2(360, 218)
-	var rect := ColorRect.new()
-	rect.color = Color("#090714")
-	rect.size = panel.size
-	panel.add_child(rect)
+	panel.size = Vector2(320, 222)
 	var border := Control.new()
 	border.size = panel.size
 	panel.add_child(border)
 	border.draw.connect(func() -> void:
-		border.draw_rect(Rect2(Vector2.ZERO, panel.size), Color("#ffda36"), false, 4.0)
-		border.draw_rect(Rect2(Vector2(6, 6), panel.size - Vector2(12, 12)), Color("#48e9ff"), false, 2.0)
+		_draw_round_box(border, Rect2(Vector2(0, 8), panel.size), Color(0.48, 0.25, 0.14, 0.22), Color(0, 0, 0, 0), 18, 0)
+		_draw_round_box(border, Rect2(Vector2.ZERO, panel.size), Color("#fff6dc"), Color("#f4a35f"), 18, 5)
+		_draw_round_box(border, Rect2(Vector2(10, 10), panel.size - Vector2(20, 20)), Color("#fffbed"), Color("#ffce83"), 12, 2)
+		_draw_round_box(border, Rect2(Vector2(18, 14), Vector2(panel.size.x - 36, 36)), Color(1, 1, 1, 0.22), Color(0, 0, 0, 0), 12, 0)
 	)
 	var title_label_local := Label.new()
 	title_label_local.text = title
-	title_label_local.position = Vector2(18, 18)
-	title_label_local.size = Vector2(324, 38)
+	title_label_local.position = Vector2(18, 22)
+	title_label_local.size = Vector2(284, 36)
 	title_label_local.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title_label_local.add_theme_font_size_override("font_size", 28)
-	title_label_local.add_theme_color_override("font_color", Color("#fff2a2"))
+	title_label_local.add_theme_color_override("font_color", Color("#7e3f47"))
 	panel.add_child(title_label_local)
 	var body_label := Label.new()
 	body_label.text = body
-	body_label.position = Vector2(28, 64)
-	body_label.size = Vector2(304, 70)
+	body_label.position = Vector2(30, 68)
+	body_label.size = Vector2(260, 80)
 	body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body_label.add_theme_font_size_override("font_size", 18)
-	body_label.add_theme_color_override("font_color", Color("#f7f1ff"))
+	body_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	body_label.add_theme_font_size_override("font_size", 17)
+	body_label.add_theme_color_override("font_color", Color("#6f3b39"))
 	panel.add_child(body_label)
 	var footer_label := Label.new()
 	footer_label.text = footer
-	footer_label.position = Vector2(18, 146)
-	footer_label.size = Vector2(324, 30)
+	footer_label.position = Vector2(18, 150)
+	footer_label.size = Vector2(284, 30)
 	footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	footer_label.add_theme_font_size_override("font_size", 17)
-	footer_label.add_theme_color_override("font_color", Color("#93fff1"))
+	footer_label.add_theme_font_size_override("font_size", 15)
+	footer_label.add_theme_color_override("font_color", Color("#2e91b8"))
 	panel.add_child(footer_label)
 	return panel
 
@@ -2271,75 +2343,75 @@ func _star_count() -> int:
 func _star_string(count: int) -> String:
 	var text := ""
 	for i in 3:
-		text += "*" if i < count else "-"
+		text += "★" if i < count else "☆"
 	return text
 
 
 func _star_rank_name(count: int) -> String:
 	match count:
 		3:
-			return "MASTER"
+			return "完美"
 		2:
-			return "CLEAR"
+			return "通关"
 		1:
-			return "SCRAPPY"
+			return "惊险"
 		_:
-			return "TRY AGAIN"
+			return "再接再厉"
 
 
 func _stage_reward_line(stars: int) -> String:
 	if stars >= 3:
-		return "Next: BLAST +1"
+		return "下关：爆破+1"
 	if stars >= 2:
-		return "Next: PAINT +1"
-	return "Best %d" % best_score
+		return "下关：染色+1"
+	return "最佳 %d" % best_score
 
 
 func _special_reward_name(kind: int) -> String:
 	match kind:
 		TileKind.BOMB:
-			return "BOMB"
+			return "炸弹"
 		TileKind.ROW_CLEAR:
-			return "ROW"
+			return "横扫"
 		TileKind.COLUMN_CLEAR:
-			return "COLUMN"
+			return "竖扫"
 		TileKind.RAINBOW:
-			return "RAINBOW"
+			return "彩虹"
 		_:
-			return "SPECIAL"
+			return "特殊"
 
 
 func _failure_tip() -> String:
 	if blocker_target > 0 and blocker_cleared < blocker_target:
-		return "Tip: specials crush blockers faster"
+		return "提示：在木箱旁做消除最快"
 	if goal_collected < goal_target and paint_charges <= 0:
-		return "Tip: save PAINT for the goal color"
+		return "提示：染色适合留给目标色"
 	if score < high_score:
-		return "Tip: longer matches score much more"
-	return "Tip: crack blockers beside matches"
+		return "提示：大连消分数更高"
+	return "提示：木箱会被相邻消除震裂"
 
 
 func _result_body(result_line: String) -> String:
 	if blocker_target > 0:
-		return "Goal %d/%d  Blockers %d/%d\nScore %d/%d\n%s" % [goal_collected, goal_target, blocker_cleared, blocker_target, score, high_score, result_line]
-	return "Goal %d/%d\nScore %d/%d\n%s" % [goal_collected, goal_target, score, high_score, result_line]
+		return "目标 %d/%d  木箱 %d/%d\n分数 %d/%d\n%s" % [goal_collected, goal_target, blocker_cleared, blocker_target, score, high_score, result_line]
+	return "目标 %d/%d\n分数 %d/%d\n%s" % [goal_collected, goal_target, score, high_score, result_line]
 
 
 func _current_objective_nudge() -> String:
 	if armed_powerup == POWERUP_BLAST:
-		return "BLAST armed: choose the most crowded 3x3."
+		return "爆破已准备：选择最拥挤的3x3区域。"
 	if armed_powerup == POWERUP_PAINT:
-		return "PAINT armed: convert a group to goal color."
+		return "染色已准备：选择一组毛球变成目标色。"
 	if _stage_complete():
-		return "Stage target complete. Finish the shift!"
+		return "关卡目标已完成，收下这一局！"
 	if moves <= 5 and not _stage_complete():
-		return "Final moves: rotate toward goal matches."
+		return "最后几步，优先做目标色连消。"
 	if blocker_target > 0 and blocker_cleared < blocker_target:
-		return "Crack blockers to clear the stage objective."
+		return "在木箱旁消除，完成木箱目标。"
 	if goal_collected >= goal_target:
-		return "Goal complete. Make long matches for score."
+		return "目标色已达成，做大连消冲分。"
 	if score >= high_score:
-		return "Score complete. Hunt the goal color."
+		return "分数已达成，继续收集目标色。"
 	return _stage_mission_line()
 
 
@@ -2362,33 +2434,33 @@ func _stage_blocker_target() -> int:
 
 
 func _stage_brief_line() -> String:
-	var text := "Collect %d goal fuzzies  Score %d" % [goal_target, high_score]
+	var text := "收集 %d 个目标毛球  分数 %d" % [goal_target, high_score]
 	if blocker_target > 0:
-		text += "\nClear %d blockers" % blocker_target
+		text += "\n清除 %d 个木箱" % blocker_target
 	return text
 
 
 func _pause_goal_line() -> String:
 	if blocker_target > 0:
-		return "Goals: fuzzies, blockers, score"
-	return "Goals: fuzzies and score"
+		return "目标：毛球、木箱、分数"
+	return "目标：毛球和分数"
 
 
 func _stage_rule_line() -> String:
 	var blocker_rate := _stage_blocker_rate()
 	if blocker_rate <= 0.0:
-		return "Rotate rows and columns to make 3+ connected groups"
+		return "拖动整行整列，连出3个以上同色毛球"
 	if blocker_target > 0:
-		return "Blocker mission: cracked blockers count when destroyed"
-	return "Blockers %.0f%%: crack them beside matches" % (blocker_rate * 100.0)
+		return "木箱任务：木箱被震碎后才计入目标"
+	return "木箱出现率 %.0f%%：在旁边消除可震裂" % (blocker_rate * 100.0)
 
 
 func _stage_mission_line() -> String:
 	if blocker_target > 0:
-		return "Collect %d goal fuzzies. Clear %d blockers." % [goal_target, blocker_target]
+		return "收集 %d 个目标毛球，清除 %d 个木箱。" % [goal_target, blocker_target]
 	if stage >= 2:
-		return "Rotate rows/columns. Crack wood crates beside matches."
-	return "Rotate rows/columns to connect 3+ goal fuzzies."
+		return "拖动整行整列，在木箱旁消除来震裂它。"
+	return "拖动整行整列，连出3个以上目标毛球。"
 
 
 func _stage_blocker_rate() -> float:
@@ -2400,20 +2472,20 @@ func _stage_blocker_rate() -> float:
 func _failure_reason() -> String:
 	var missing: Array[String] = []
 	if goal_collected < goal_target:
-		missing.append("Need %d more goal" % (goal_target - goal_collected))
+		missing.append("还差%d个目标" % (goal_target - goal_collected))
 	if blocker_target > 0 and blocker_cleared < blocker_target:
-		missing.append("Need %d blockers" % (blocker_target - blocker_cleared))
+		missing.append("还差%d个木箱" % (blocker_target - blocker_cleared))
 	if score < high_score:
-		missing.append("Need %d more score" % (high_score - score))
+		missing.append("还差%d分" % (high_score - score))
 	if missing.is_empty():
-		return "One more match would have done it"
+		return "再来一次消除就能过关"
 	return " / ".join(missing)
 
 
 func _hud_goal_text() -> String:
 	if blocker_target > 0:
-		return "GOAL\n%d/%d  CRATE %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
-	return "GOAL\n%d/%d" % [goal_collected, goal_target]
+		return "目标\n%d/%d  箱 %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
+	return "目标\n%d/%d" % [goal_collected, goal_target]
 
 
 func _objective_progress_value() -> int:
@@ -2426,44 +2498,44 @@ func _objective_progress_target() -> int:
 
 func _objective_progress_text() -> String:
 	if blocker_target > 0:
-		return "%d/%d + Crate %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
+		return "%d/%d + 木箱 %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
 	return "%d/%d" % [goal_collected, goal_target]
 
 
 func _update_hud() -> void:
 	score_label.text = "%d/%d" % [score, high_score]
 	var score_percent: float = clamp(float(score) / max(1.0, float(high_score)), 0.0, 1.0)
-	moves_label.text = "MOVES\n%02d" % moves
+	moves_label.text = "步数\n%02d" % moves
 	goal_label.text = _hud_goal_text()
-	combo_label.text = "COMBO x%d" % max(1, combo)
-	level_label.text = "STAGE %d" % stage
+	combo_label.text = "连锁 x%d" % max(1, combo)
+	level_label.text = "第%d关" % stage
 	if is_instance_valid(best_label):
-		best_label.text = "BEST %d" % best_score
+		best_label.text = "最佳 %d" % best_score
 	target_bar.value = min(score, high_score)
 	if is_instance_valid(score_progress_label):
 		score_progress_label.text = "%d%%" % int(round(score_percent * 100.0))
-		score_progress_label.add_theme_color_override("font_color", Color("#b8fff2") if score >= high_score else Color("#ffe9d2"))
+		score_progress_label.add_theme_color_override("font_color", Color("#2e91b8") if score >= high_score else Color("#7a4a45"))
 	if is_instance_valid(goal_bar):
 		goal_bar.max_value = _objective_progress_target()
 		goal_bar.tint_progress = COLORS[goal_color]
 		goal_bar.value = _objective_progress_value()
 	if is_instance_valid(goal_progress_value_label):
 		goal_progress_value_label.text = _objective_progress_text()
-		goal_progress_value_label.add_theme_color_override("font_color", Color("#b8fff2") if _objectives_complete() else Color("#fff4ad"))
+		goal_progress_value_label.add_theme_color_override("font_color", Color("#2e91b8") if _objectives_complete() else Color("#7e3f47"))
 	fever_bar.value = fever
 	if is_instance_valid(fever_value_label):
 		fever_value_label.text = "%d%%" % int(round(fever))
-		fever_value_label.add_theme_color_override("font_color", Color("#fff36d") if fever >= 80.0 else Color("#ffb6c7"))
+		fever_value_label.add_theme_color_override("font_color", Color("#ff8b4e") if fever >= 80.0 else Color("#d75d64"))
 	if is_instance_valid(shuffle_button):
-		shuffle_button.text = "REMIX %d" % shuffle_charges
+		shuffle_button.text = "↻ 重排\nx%d" % shuffle_charges
 		shuffle_button.disabled = shuffle_charges <= 0
 		_style_powerup_button(shuffle_button, _powerup_accent(POWERUP_SHUFFLE), false, shuffle_button.disabled)
 	if is_instance_valid(blast_button):
-		blast_button.text = ("AIM NOW" if armed_powerup == POWERUP_BLAST else "BLAST %d" % blast_charges)
+		blast_button.text = ("◎ 瞄准\n中" if armed_powerup == POWERUP_BLAST else "✦ 爆破\nx%d" % blast_charges)
 		blast_button.disabled = blast_charges <= 0
 		_style_powerup_button(blast_button, _powerup_accent(POWERUP_BLAST), armed_powerup == POWERUP_BLAST, blast_button.disabled)
 	if is_instance_valid(paint_button):
-		paint_button.text = ("PICK ONE" if armed_powerup == POWERUP_PAINT else "PAINT %d" % paint_charges)
+		paint_button.text = ("● 选择\n组" if armed_powerup == POWERUP_PAINT else "● 染色\nx%d" % paint_charges)
 		paint_button.disabled = paint_charges <= 0
 		_style_powerup_button(paint_button, _powerup_accent(POWERUP_PAINT), armed_powerup == POWERUP_PAINT, paint_button.disabled)
 	if not busy and not ended and is_instance_valid(mission_label):
@@ -2478,7 +2550,7 @@ func _flash_status(text: String) -> void:
 		mission_label.text = _current_objective_nudge()
 	var tween := create_tween()
 	status_label.modulate = Color("#ffffff")
-	tween.tween_property(status_label, "modulate", Color("#d8fff9"), 0.28)
+	tween.tween_property(status_label, "modulate", Color("#7e3f47"), 0.28)
 
 
 func _play_sfx(kind: String) -> void:
@@ -2548,12 +2620,12 @@ func _trigger_fever_reward() -> void:
 	fever = 0.0
 	if rng.randf() < 0.55:
 		blast_charges += 1
-		_flash_status("FEVER! BLAST +1")
-		_spawn_milestone_text(Vector2(224, 796), "FEVER BLAST +1", Color("#ff7a9e"), 26)
+		_flash_status("热力满格！爆破+1")
+		_spawn_milestone_text(Vector2(224, 796), "热力 爆破+1", Color("#ff7a9e"), 26)
 	else:
 		paint_charges += 1
-		_flash_status("FEVER! PAINT +1")
-		_spawn_milestone_text(Vector2(224, 796), "FEVER PAINT +1", Color("#68f3ff"), 26)
+		_flash_status("热力满格！染色+1")
+		_spawn_milestone_text(Vector2(224, 796), "热力 染色+1", Color("#4ec6ff"), 26)
 	_play_sfx("power")
 	_board_bump()
 	_pulse_fever_console()
@@ -2579,7 +2651,7 @@ func _maybe_goal_assist() -> void:
 		return
 	assist_given = true
 	paint_charges += 1
-	_flash_status("Goal Assist! PAINT +1")
+	_flash_status("目标支援！染色+1")
 	_play_sfx("power")
 	_update_hud()
 
@@ -2587,21 +2659,21 @@ func _maybe_goal_assist() -> void:
 func _check_milestones(score_before: int, goal_before: int, blocker_before: int, fever_before: float) -> void:
 	if not goal_milestone_shown and goal_before < goal_target and goal_collected >= goal_target:
 		goal_milestone_shown = true
-		_spawn_milestone_text(Vector2(224, 652), "GOAL COMPLETE", Color("#b8fff2"), 30)
-		_flash_status("Goal complete! Build score now.")
+		_spawn_milestone_text(Vector2(224, 652), "目标达成", Color("#2e91b8"), 30)
+		_flash_status("目标达成！现在冲分。")
 		_board_bump()
 	if blocker_target > 0 and not blocker_milestone_shown and blocker_before < blocker_target and blocker_cleared >= blocker_target:
 		blocker_milestone_shown = true
-		_spawn_milestone_text(Vector2(224, 652), "BLOCKERS CLEAR", Color("#ffb6f2"), 28)
-		_flash_status("Blocker objective complete!")
+		_spawn_milestone_text(Vector2(224, 652), "木箱清除", Color("#ff7f91"), 28)
+		_flash_status("木箱目标完成！")
 		_board_bump()
 	if not score_milestone_shown and score_before < high_score and score >= high_score:
 		score_milestone_shown = true
-		_spawn_milestone_text(Vector2(224, 120), "SCORE READY", Color("#fff36d"), 28)
-		_flash_status("Score ready! Finish the goal color.")
+		_spawn_milestone_text(Vector2(224, 120), "分数达标", Color("#f47a5b"), 28)
+		_flash_status("分数达标！继续收集目标色。")
 	if not fever_warning_shown and fever_before < 80.0 and fever >= 80.0 and fever < MAX_FEVER:
 		fever_warning_shown = true
-		_spawn_milestone_text(Vector2(224, 796), "FEVER HOT", Color("#ff7a9e"), 26)
+		_spawn_milestone_text(Vector2(224, 796), "热力升温", Color("#ff8b4e"), 26)
 
 
 func _spawn_milestone_text(pos: Vector2, text: String, color: Color, font_size: int = 20) -> void:
@@ -2780,6 +2852,18 @@ func _create_textures() -> void:
 	badge_textures[TileKind.BLOCKER] = _make_badge_texture(Color("#6f6a7a"))
 	blocker_textures["full"] = _load_png_texture(BLOCKER_CRATE_FULL_PATH)
 	blocker_textures["damaged"] = _load_png_texture(BLOCKER_CRATE_DAMAGED_PATH)
+	ui_textures["board"] = _load_png_texture(UI_BOARD_FRAME_PATH)
+	ui_textures["popup"] = _load_png_texture(UI_POPUP_PANEL_PATH)
+	ui_textures["progress_yellow"] = _load_png_texture(UI_PROGRESS_YELLOW_PATH)
+	ui_textures["progress_blue"] = _load_png_texture(UI_PROGRESS_BLUE_PATH)
+	ui_textures["progress_pink"] = _load_png_texture(UI_PROGRESS_PINK_PATH)
+	ui_textures["menu"] = _load_png_texture(UI_ICON_MENU_PATH)
+	ui_textures["hint"] = _load_png_texture(UI_ICON_HINT_PATH)
+	ui_textures["shuffle"] = _load_png_texture(UI_ICON_SHUFFLE_PATH)
+	ui_textures["blast"] = _load_png_texture(UI_ICON_BLAST_PATH)
+	ui_textures["paint"] = _load_png_texture(UI_ICON_PAINT_PATH)
+	ui_textures["goal"] = _load_png_texture(UI_ICON_GOAL_PATH)
+	ui_textures["fever"] = _load_png_texture(UI_ICON_FEVER_PATH)
 
 
 func _make_fuzzy_texture(base: Color) -> Texture2D:
@@ -2788,26 +2872,31 @@ func _make_fuzzy_texture(base: Color) -> Texture2D:
 		for x in 64:
 			var p := Vector2(x - 32, y - 32)
 			var dist := p.length()
-			var angle_noise := sin(p.angle() * 12.0 + dist * 0.33) * 2.5
-			var radius := 27.0 + angle_noise + rng.randf_range(-1.2, 1.2)
+			var angle_noise := sin(p.angle() * 18.0 + dist * 0.22) * 1.4
+			var radius := 27.0 + angle_noise
 			if dist > radius:
 				image.set_pixel(x, y, Color(0, 0, 0, 0))
 				continue
-			var shade: float = clamp(1.0 - dist / 38.0, 0.35, 1.0)
-			var c := base.lerp(Color.WHITE, 0.16 + shade * 0.16)
-			if dist > radius - 2.2:
-				c = base.darkened(0.45)
-			elif dist < 14.0:
-				c = c.lightened(0.13)
-			if rng.randf() < 0.12:
-				c = c.darkened(rng.randf_range(0.08, 0.22))
+			var light_dir := Vector2(-0.55, -0.75).normalized()
+			var normal := p.normalized() if dist > 0.01 else Vector2.ZERO
+			var lighting: float = clamp(normal.dot(light_dir) * 0.5 + 0.5, 0.0, 1.0)
+			var shade: float = clamp(1.0 - dist / 36.0, 0.10, 1.0)
+			var c := base
+			c = c.lerp(Color.WHITE, 0.12 + lighting * 0.20 + shade * 0.12)
+			if dist > radius - 2.0:
+				c = base.darkened(0.30)
+			elif dist < 17.0:
+				c = c.lightened(0.08)
+			if int(x + y) % 9 == 0 and dist > 18.0:
+				c = c.darkened(0.08)
 			image.set_pixel(x, y, c)
-	_draw_disc(image, Vector2(23, 22), 8, Color(1, 1, 1, 0.18))
+	_draw_disc(image, Vector2(22, 21), 7, Color(1, 1, 1, 0.18))
+	_draw_disc(image, Vector2(19, 18), 3, Color(1, 1, 1, 0.16))
 	for eye_x in [23, 41]:
-		_draw_disc(image, Vector2(eye_x, 29), 7, Color.WHITE)
-		_draw_disc(image, Vector2(eye_x + 1, 31), 3, Color("#191124"))
+		_draw_disc(image, Vector2(eye_x, 30), 6, Color("#fffdf0"))
+		_draw_disc(image, Vector2(eye_x + 1, 31), 3, Color("#4b323b"))
 		_draw_disc(image, Vector2(eye_x + 2, 29), 1, Color.WHITE)
-	_draw_arc_mouth(image, base.darkened(0.55))
+	_draw_arc_mouth(image, base.darkened(0.42))
 	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
 	return texture
@@ -2851,33 +2940,94 @@ func _draw_arc_mouth(image: Image, color: Color) -> void:
 		_draw_disc(image, Vector2(x, y), 1, color)
 
 
+func _draw_soft_panel(canvas: CanvasItem, rect: Rect2, fill: Color, rim: Color, shadow: Color = Color(0.45, 0.22, 0.14, 0.20)) -> void:
+	_draw_round_box(canvas, Rect2(rect.position + Vector2(0, 6), rect.size), shadow, shadow, 14, 0)
+	_draw_round_box(canvas, rect, fill, rim, 14, 3)
+	_draw_round_box(canvas, Rect2(rect.position + Vector2(5, 5), Vector2(rect.size.x - 10, rect.size.y * 0.26)), Color(1, 1, 1, 0.18), Color(1, 1, 1, 0.0), 10, 0)
+	canvas.draw_line(rect.position + Vector2(18, 7), rect.position + Vector2(rect.size.x - 18, 7), Color(1, 1, 1, 0.45), 2.0)
+
+
+func _draw_candy_bar(canvas: CanvasItem, rect: Rect2, fill: Color, under: Color) -> void:
+	_draw_round_box(canvas, Rect2(rect.position + Vector2(0, 3), rect.size), Color(0.56, 0.28, 0.18, 0.18), Color(0, 0, 0, 0), rect.size.y * 0.5, 0)
+	_draw_round_box(canvas, rect, under, Color("#9a6a58"), rect.size.y * 0.5, 2)
+	var shine := Rect2(rect.position + Vector2(3, 3), Vector2(max(0.0, rect.size.x - 6.0), max(2.0, rect.size.y * 0.28)))
+	_draw_round_box(canvas, shine, fill.lightened(0.30), Color(0, 0, 0, 0), shine.size.y * 0.5, 0)
+
+
+func _draw_round_box(canvas: CanvasItem, rect: Rect2, fill: Color, border: Color, radius: float, border_width: int = 0) -> void:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(border_width)
+	var corner := int(max(0.0, radius))
+	style.corner_radius_top_left = corner
+	style.corner_radius_top_right = corner
+	style.corner_radius_bottom_left = corner
+	style.corner_radius_bottom_right = corner
+	canvas.draw_style_box(style, rect)
+
+
+func _draw_meter(canvas: CanvasItem, rect: Rect2, progress: float, fill: Color, label_color: Color = Color("#7e3f47")) -> void:
+	_draw_candy_bar(canvas, rect, fill, Color("#fff1d6"))
+	var clamped: float = clamp(progress, 0.0, 1.0)
+	if clamped > 0.0:
+		var inner := Rect2(rect.position + Vector2(4, 4), Vector2(max(8.0, (rect.size.x - 8.0) * clamped), max(2.0, rect.size.y - 8.0)))
+		_draw_round_box(canvas, inner, fill, fill.darkened(0.08), inner.size.y * 0.5, 1)
+		var gloss := Rect2(inner.position + Vector2(2, 2), Vector2(max(0.0, inner.size.x - 4.0), max(2.0, inner.size.y * 0.35)))
+		_draw_round_box(canvas, gloss, Color(1, 1, 1, 0.22), Color(0, 0, 0, 0), gloss.size.y * 0.5, 0)
+	canvas.draw_circle(rect.position + Vector2(6, rect.size.y * 0.5), 3, label_color.lightened(0.25))
+	canvas.draw_circle(rect.position + Vector2(rect.size.x - 6, rect.size.y * 0.5), 3, label_color.lightened(0.25))
+
+
 func _draw_backdrop(backdrop: Control) -> void:
 	var rect := Rect2(Vector2.ZERO, Vector2(448, 960))
-	backdrop.draw_rect(rect, Color(0.02, 0.015, 0.035, 0.46))
-	backdrop.draw_rect(Rect2(Vector2(10, 40), Vector2(428, 132)), Color(0.03, 0.02, 0.07, 0.92))
-	backdrop.draw_rect(Rect2(Vector2(12, 42), Vector2(424, 128)), Color("#251339"), false, 3.0)
-	backdrop.draw_rect(Rect2(Vector2(16, 98), Vector2(88, 62)), Color(0.17, 0.09, 0.27, 0.92))
-	backdrop.draw_rect(Rect2(Vector2(300, 98), Vector2(132, 62)), Color(0.17, 0.09, 0.27, 0.92))
+	backdrop.draw_rect(rect, Color("#ffe8bb"))
+	backdrop.draw_rect(Rect2(Vector2.ZERO, Vector2(448, 220)), Color("#ffd4a4"))
+	backdrop.draw_rect(Rect2(Vector2.ZERO, Vector2(448, 960)), Color(1.0, 0.96, 0.78, 0.20))
+	for i in 9:
+		var y := 34.0 + i * 96.0
+		backdrop.draw_line(Vector2(-24, y), Vector2(472, y + 68), Color(1, 1, 1, 0.12), 18.0)
+	for i in 12:
+		var center := Vector2(30 + (i * 71) % 410, 70 + (i * 137) % 780)
+		var color := _candy_dot_color(i)
+		backdrop.draw_circle(center, 7 + (i % 3) * 2, color, true)
+		backdrop.draw_circle(center, 7 + (i % 3) * 2, Color(1, 1, 1, 0.38), false, 1.5)
+	_draw_soft_panel(backdrop, Rect2(Vector2(14, 55), Vector2(420, 126)), Color("#fff7df"), Color("#e9a35d"))
+	_draw_soft_panel(backdrop, Rect2(Vector2(22, 108), Vector2(94, 66)), Color("#ffe2ed"), Color("#ff8faa"))
+	_draw_soft_panel(backdrop, Rect2(Vector2(300, 108), Vector2(128, 66)), Color("#e0f8ff"), Color("#5fc5e8"))
 	var goal_center := Vector2(318, 128)
 	backdrop.draw_circle(goal_center, 13, COLORS[goal_color])
+	backdrop.draw_circle(goal_center + Vector2(-4, -4), 6, Color(1, 1, 1, 0.42))
 	backdrop.draw_circle(goal_center, 13, Color.WHITE, false, 2.0)
 	var board_rect := Rect2(board_origin - Vector2(9, 9), board_size + Vector2(18, 18))
-	backdrop.draw_rect(board_rect, Color("#ffda36"))
-	backdrop.draw_rect(board_rect.grow(-4), Color("#fb5228"))
-	backdrop.draw_rect(board_rect.grow(-9), Color("#27dce5"))
-	backdrop.draw_rect(board_rect.grow(-14), Color("#07101e"))
-	backdrop.draw_rect(board_rect, Color("#ffffff"), false, 2.0)
-	backdrop.draw_rect(Rect2(Vector2(16, 702), Vector2(416, 188)), Color(0.03, 0.02, 0.07, 0.95))
-	backdrop.draw_rect(Rect2(Vector2(22, 708), Vector2(404, 176)), Color("#241334"), false, 2.0)
-	backdrop.draw_rect(Rect2(Vector2(34, 714), Vector2(380, 24)), Color("#150c22"))
-	backdrop.draw_rect(Rect2(Vector2(34, 738), Vector2(380, 1)), Color("#4c2a68"))
-	backdrop.draw_rect(Rect2(Vector2(72, 752), Vector2(328, 14)), Color("#090612"))
-	backdrop.draw_rect(Rect2(Vector2(72, 752), Vector2(328, 14)), Color("#6f5f88"), false, 1.5)
-	backdrop.draw_rect(Rect2(Vector2(72, 780), Vector2(328, 22)), Color("#090612"))
-	backdrop.draw_rect(Rect2(Vector2(72, 780), Vector2(328, 22)), Color("#80586e"), false, 1.5)
+	_draw_aligned_board_frame(backdrop, board_rect)
+	var inner_board := Rect2(board_origin + Vector2(BOARD_PADDING, BOARD_PADDING), Vector2(
+		BOARD_COLS * TILE_SIZE + (BOARD_COLS - 1) * TILE_GAP,
+		BOARD_ROWS * TILE_SIZE + (BOARD_ROWS - 1) * TILE_GAP
+	))
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell_rect := Rect2(inner_board.position + Vector2(col * (TILE_SIZE + TILE_GAP), row * (TILE_SIZE + TILE_GAP)), Vector2(TILE_SIZE, TILE_SIZE))
+			var cell_color := Color("#ffdca8") if (row + col) % 2 == 0 else Color("#ffe7bf")
+			_draw_round_box(backdrop, cell_rect, cell_color, Color(1, 1, 1, 0.24), 4, 1)
+	_draw_soft_panel(backdrop, Rect2(Vector2(18, 704), Vector2(412, 198)), Color("#fff7df"), Color("#e9a35d"))
+	backdrop.draw_line(Vector2(46, 728), Vector2(402, 728), Color("#f0c08b"), 2.0)
+	_draw_meter(backdrop, Rect2(Vector2(84, 756), Vector2(328, 16)), float(_objective_progress_value()) / max(1.0, float(_objective_progress_target())), COLORS[goal_color])
+	_draw_meter(backdrop, Rect2(Vector2(84, 786), Vector2(328, 24)), fever / MAX_FEVER, Color("#ff8b4e"))
 	for i in 3:
-		var slot := Rect2(Vector2(38 + i * 132, 817), Vector2(122, 44))
-		backdrop.draw_rect(slot, Color("#150c22"))
+		var slot := Rect2(Vector2(34 + i * 132, 819), Vector2(120, 62))
+		_draw_round_box(backdrop, Rect2(slot.position + Vector2(0, 5), slot.size), Color(0.55, 0.30, 0.18, 0.10), Color(0, 0, 0, 0), 18, 0)
+
+
+func _draw_aligned_board_frame(canvas: CanvasItem, rect: Rect2) -> void:
+	_draw_round_box(canvas, Rect2(rect.position + Vector2(0, 8), rect.size), Color(0.49, 0.25, 0.15, 0.22), Color(0, 0, 0, 0), 16, 0)
+	_draw_round_box(canvas, rect.grow(12), Color("#ffb0c6"), Color("#ffffff"), 20, 3)
+	_draw_round_box(canvas, rect.grow(6), Color("#ff7da3"), Color("#ffd4e0"), 16, 3)
+	_draw_round_box(canvas, rect, Color("#fff5d5"), Color("#f0a85d"), 12, 4)
+	var shine_top := Rect2(rect.position + Vector2(16, 8), Vector2(rect.size.x - 32, 10))
+	_draw_round_box(canvas, shine_top, Color(1, 1, 1, 0.26), Color(0, 0, 0, 0), 5, 0)
+	var shine_left := Rect2(rect.position + Vector2(8, 18), Vector2(9, rect.size.y - 36))
+	_draw_round_box(canvas, shine_left, Color(1, 1, 1, 0.18), Color(0, 0, 0, 0), 5, 0)
 
 
 func _draw_prize_orb(holder: Control) -> void:
@@ -2886,3 +3036,15 @@ func _draw_prize_orb(holder: Control) -> void:
 	holder.draw_circle(center, 35, Color("#ffc936"))
 	holder.draw_circle(center + Vector2(-9, -9), 17, Color("#fff39a"))
 	holder.draw_arc(center, 20, 0.15 * PI, 0.85 * PI, 24, Color("#7e5517"), 5.0)
+
+
+func _candy_dot_color(index: int) -> Color:
+	match index % 4:
+		0:
+			return Color("#fff2a8")
+		1:
+			return Color("#ffc7d2")
+		2:
+			return Color("#bceeff")
+		_:
+			return Color("#d8ffc7")
