@@ -167,13 +167,13 @@ The following commands passed after this change:
 ### Implemented
 
 - Added `export_presets.cfg` with a Web export preset.
-- Added `.github/workflows/pages.yml` to export the Godot 4.6.2 Web build on pushes to `main`.
-- Pages publishing is guarded to public repositories because this private repository could not enable Pages with the current GitHub plan.
+- Chose a local-export deployment flow: export the Godot Web build locally and publish the generated static files from the `gh-pages` branch.
+- Removed the GitHub Actions export workflow so Pages does not need to download Godot or export templates on GitHub runners.
 - Added `data/levels/*.json` to the Web preset include filter so authored level JSON files are packed into the exported game.
 
 ### Verification
 
-- Local Web export was added for verification before publishing.
+- Local Web export was used for verification before publishing.
 
 Additional screenshot checks were run for:
 

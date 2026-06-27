@@ -85,9 +85,9 @@ Normal stage progression is still preserved. JSON levels are currently used thro
 
 ## How is the web build deployed?
 
-GitHub Pages is deployed by `.github/workflows/pages.yml`. On pushes to `main`, the workflow downloads Godot 4.6.2, installs the Web export templates, exports the `Web` preset from `export_presets.cfg`, and publishes the generated `_site` artifact to Pages when the repository is public.
+GitHub Pages serves the `gh-pages` branch. The web build is exported locally with the `Web` preset from `export_presets.cfg`, then the generated static files are committed to `gh-pages`.
 
-For a private repository, the workflow still validates the Web export but skips Pages publishing unless the repository plan supports private Pages and the workflow condition is adjusted.
+This keeps generated web files out of `main` while avoiding a GitHub Actions runner download of Godot and the Web export templates.
 
 ## How do disabled cells work?
 
