@@ -1,0 +1,11 @@
+{
+	"levels": [
+		{
+			"description": "内置编辑器生成",
+			"id": "level_001",
+			"level_index": 1,
+			"name": "小奶关",
+			"path": "res://data/levels/level_001.json"
+		}
+	]
+}

@@ -1,0 +1,46 @@
+{
+	"blocker_target": 4,
+	"blockers": {
+		"3,3": 2,
+		"3,5": 1,
+		"5,3": 1,
+		"5,5": 2
+	},
+	"board": {
+		"cols": 9,
+		"rows": 9
+	},
+	"colors": [
+		0,
+		1,
+		2,
+		3,
+		4
+	],
+	"description": "内置编辑器生成",
+	"disabled_cells": [
+		[
+			0,
+			0
+		],
+		[
+			8,
+			0
+		],
+		[
+			0,
+			8
+		],
+		[
+			8,
+			8
+		]
+	],
+	"goal_color": 1,
+	"goal_target": 22,
+	"id": "level_001",
+	"level_index": 1,
+	"move_limit": 32,
+	"name": "小奶关",
+	"score_target": 9000
+}

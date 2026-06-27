@@ -108,3 +108,73 @@ The following commands were reported passing after the UI/layout changes:
 ```
 
 Screenshot checks were also used repeatedly while tuning the board/frame alignment.
+
+## 2026-06-27 - In-Game Level Editor
+
+### Goal
+
+- Add a built-in level editor without replacing the existing stage flow yet.
+- Let authored JSON levels configure board structure, color pool, objectives, move limit, and crate placement.
+- Keep normal gameplay generation random within the authored constraints.
+
+### Implemented
+
+- Added an in-game editor entry from the pause menu via `编辑器`.
+- Added `--level-editor` launch support for opening directly into the editor.
+- Added `--level=res://data/levels/level_001.json` support for loading a JSON level for playtest.
+- Added a level list backed by `res://data/levels/index.json`.
+- Added save/new/playtest controls.
+- Level list clicks now load a level directly for editing.
+- Added level management controls: add, delete, duplicate, move up, and move down.
+- Reordering updates `level_index` in `index.json` without renaming JSON files.
+- Added editor brushes for:
+  - Normal cell
+  - Disabled cell
+  - Crate durability 1
+  - Crate durability 2
+- Brush placement supports dragging across cells to paint in batches.
+- Added color-pool selection. Refill, opening rerolls, and opening guaranteed-move seeding now use the active level color pool.
+- Added objective editing for target color, target fuzzy count, crate target, score target, and move limit.
+- Score, target fuzzy, and crate objectives are optional. A value of `0` disables that objective, hides it from the relevant UI, and removes it from completion checks.
+- Added permanent disabled-cell terrain. Disabled cells act as holes: no spawn, no crate, no matching, no gravity fill.
+- Added default sample files:
+  - `data/levels/index.json`
+  - `data/levels/level_001.json`
+
+### Transitional Route
+
+- The existing stage progression remains the default path.
+- JSON levels are active when launched through `--level=...` or when the editor playtest action saves and starts the selected level.
+- This is the agreed route 1.5: keep the old flow stable while introducing JSON-authored levels.
+
+### Verification
+
+The following commands passed after this change:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+```
+
+## 2026-06-27 - GitHub Pages Web Export
+
+### Goal
+
+- Make the Godot game deployable to GitHub Pages from the repository.
+
+### Implemented
+
+- Added `export_presets.cfg` with a Web export preset.
+- Added `.github/workflows/pages.yml` to export the Godot 4.6.2 Web build and publish it through GitHub Pages on pushes to `main`.
+- Added `data/levels/*.json` to the Web preset include filter so authored level JSON files are packed into the exported game.
+
+### Verification
+
+- Local Web export was added for verification before publishing.
+
+Additional screenshot checks were run for:
+
+- `--level=res://data/levels/level_001.json --screenshot=/tmp/codex-level-json-2.png`
+- `--level-editor --screenshot=/tmp/codex-level-editor.png`

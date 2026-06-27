@@ -62,6 +62,43 @@ Visual checks can pass while pointer input is broken. `--drag-input-test` proves
 - `--smoke-test --stage=4`
 - `--screenshot=...`
 
+## Is there a level editor?
+
+Yes. The game has an in-game level editor that can be opened from the pause menu with `编辑器`, or at launch with `--level-editor`.
+
+The first editor version supports:
+
+- A level list from `res://data/levels/index.json`.
+- JSON level files under `res://data/levels/`.
+- Clicking a level in the list loads it for editing.
+- Adding, deleting, duplicating, and reordering levels with up/down controls.
+- A 9x9 board.
+- Normal cells and disabled cells.
+- Wooden crates with configurable durability 1 or 2.
+- Brush placement by clicking or dragging across cells to paint in batches.
+- A selectable color pool, so a level can choose exactly which fuzzy colors can spawn.
+- Random fuzzy generation from the selected color pool.
+- Goal configuration for move limit, score target, target color, target fuzzy count, and crate-clear count.
+- Save, load, new level, and playtest actions.
+
+Normal stage progression is still preserved. JSON levels are currently used through the editor/playtest path or the `--level=res://data/levels/level_001.json` launch argument. This is the transitional route before fully replacing stage logic with authored JSON levels.
+
+## How is the web build deployed?
+
+GitHub Pages is deployed by `.github/workflows/pages.yml`. On pushes to `main`, the workflow downloads Godot 4.6.2, installs the Web export templates, exports the `Web` preset from `export_presets.cfg`, and publishes the generated `_site` artifact to Pages.
+
+## How do disabled cells work?
+
+Disabled cells are holes in the board. They do not spawn fuzzies, cannot hold crates, do not participate in matches, and stay empty during gravity and refill.
+
+## How do optional goals work?
+
+Score, target fuzzy count, and crate-clear count are optional level goals.
+
+If a target value is `0`, that goal is disabled for the level. Disabled goals do not appear in HUD/mission/result text and do not block completion.
+
+For example, `score_target = 0` means score is shown as free play, while `goal_target = 0` means target-color fuzzy collection is not required.
+
 ## What are common failure modes?
 
 - Match logic accidentally checks only straight lines.
@@ -70,3 +107,5 @@ Visual checks can pass while pointer input is broken. `--drag-input-test` proves
 - A test calls board mutation directly but the real pointer path is broken.
 - Random tile generation reintroduces legacy special tiles.
 - Board shake tweens stack and leave the board offset from its intended origin.
+- JSON color pools are ignored and refill or opening stabilization creates a color not selected for that level.
+- Disabled cells are treated as temporary empty cells and get refilled.
