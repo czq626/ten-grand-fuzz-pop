@@ -68,8 +68,9 @@ Yes. The game has an in-game level editor that can be opened from the pause menu
 
 The first editor version supports:
 
-- A level list from `res://data/levels/index.json`.
-- JSON level files under `res://data/levels/`.
+- A merged level list from built-in `res://data/levels/index.json` and local `user://levels/index.json`.
+- Built-in JSON level files under `res://data/levels/`.
+- Player-created or edited JSON level files under `user://levels/`.
 - Clicking a level in the list loads it for editing.
 - Adding, deleting, duplicating, and reordering levels with up/down controls.
 - A 9x9 board.
@@ -79,9 +80,11 @@ The first editor version supports:
 - A selectable color pool, so a level can choose exactly which fuzzy colors can spawn.
 - Random fuzzy generation from the selected color pool.
 - Goal configuration for move limit, score target, target color, target fuzzy count, and crate-clear count.
-- Save, load, new level, and playtest actions.
+- Save, load, new level, import/export, and playtest actions.
 
 Normal stage progression is still preserved. JSON levels are currently used through the editor/playtest path or the `--level=res://data/levels/level_001.json` launch argument. This is the transitional route before fully replacing stage logic with authored JSON levels.
+
+On GitHub Pages and other Web exports, `res://` is bundled into the game package and is read-only. The editor saves browser-local changes into `user://levels/`, which Godot stores through browser local persistence. Refreshing the same browser should keep those levels, but clearing site data, using private browsing, or switching devices can lose them. Use editor export/import to back up or share a level JSON file.
 
 ## How is the web build deployed?
 

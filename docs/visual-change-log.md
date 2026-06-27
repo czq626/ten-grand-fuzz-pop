@@ -164,6 +164,7 @@ The following commands passed after this change:
 
 - Make the Godot game deployable to GitHub Pages from the repository.
 - Fix missing Chinese glyphs in the GitHub Pages build.
+- Make Web level-editor saves survive browser refreshes.
 
 ### Implemented
 
@@ -172,12 +173,18 @@ The following commands passed after this change:
 - Removed the GitHub Actions export workflow so Pages does not need to download Godot or export templates on GitHub runners.
 - Added `data/levels/*.json` to the Web preset include filter so authored level JSON files are packed into the exported game.
 - Added `assets/fonts/NotoSansCJKsc-Regular.otf` and set it as the runtime UI theme default font so Chinese labels render correctly in browser builds.
+- Changed the level editor to merge built-in `res://data/levels` entries with local `user://levels` entries.
+- New or edited levels are saved under `user://levels/` so Web builds can restore them from browser-local persistence after refresh.
+- Added editor import/export actions for copying or downloading level JSON as a backup and sharing path.
 
 ### Verification
 
 - Local Web export was used for verification before publishing.
 - Local screenshot check passed with Chinese glyphs visible:
   - `/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --screenshot=/tmp/codex-font-check.png`
+- Local persistence check passed:
+  - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test`
+- In the restricted Codex sandbox, GUI Godot invocations exited before producing logs; the same logic was verified with headless commands and should be rechecked visually in a normal desktop/browser run.
 
 Additional screenshot checks were run for:
 

@@ -12,6 +12,8 @@ const GOAL_TARGET := 24
 const SAVE_PATH := "user://save.cfg"
 const LEVEL_INDEX_PATH := "res://data/levels/index.json"
 const LEVEL_DIR_PATH := "res://data/levels"
+const USER_LEVEL_INDEX_PATH := "user://levels/index.json"
+const USER_LEVEL_DIR_PATH := "user://levels"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
 const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
 const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
@@ -174,6 +176,7 @@ func _ready() -> void:
 	_new_game()
 	_maybe_run_smoke_test()
 	_maybe_run_drag_input_test()
+	_maybe_run_level_persistence_test()
 	_maybe_capture_result()
 	_maybe_capture_menu()
 	_maybe_capture_viewport()
@@ -263,7 +266,7 @@ func _has_capture_arg() -> bool:
 
 
 func _is_verification_mode() -> bool:
-	return OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test") or _has_capture_arg()
+	return OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test") or OS.get_cmdline_user_args().has("--level-persistence-test") or _has_capture_arg()
 
 
 func _has_stage_arg() -> bool:
@@ -310,6 +313,52 @@ func _maybe_run_drag_input_test() -> void:
 	if is_instance_valid(sfx_player):
 		sfx_player.stop()
 		sfx_player.stream = null
+	get_tree().quit()
+
+
+func _maybe_run_level_persistence_test() -> void:
+	if not OS.get_cmdline_user_args().has("--level-persistence-test"):
+		return
+	_load_level_index()
+	var imported_level := {
+		"id": "level_persist_test",
+		"name": "持久化测试",
+		"description": "自动测试生成",
+		"level_index": 88,
+		"board": {"cols": BOARD_COLS, "rows": BOARD_ROWS},
+		"colors": [0, 1, 2],
+		"goal_color": 0,
+		"move_limit": 12,
+		"score_target": 1234,
+		"goal_target": 5,
+		"blocker_target": 0,
+		"disabled_cells": [[0, 0]],
+		"blockers": {}
+	}
+	var path := "%s/level_persist_test.json" % USER_LEVEL_DIR_PATH
+	var save_error := _save_level_file(path, imported_level)
+	if save_error != OK:
+		push_error("Level persistence test failed: level save error %s" % error_string(save_error))
+		get_tree().quit(1)
+		return
+	_upsert_level_index(imported_level, path)
+	save_error = _save_level_index()
+	if save_error != OK:
+		push_error("Level persistence test failed: index save error %s" % error_string(save_error))
+		get_tree().quit(1)
+		return
+	_load_level_index()
+	var found := false
+	for entry in editor_level_index:
+		if String(entry.get("id", "")) == "level_persist_test" and String(entry.get("path", "")) == path and bool(entry.get("user", false)):
+			found = true
+			break
+	var loaded := _load_level_file(path)
+	if not found or String(loaded.get("name", "")) != "持久化测试":
+		push_error("Level persistence test failed: saved user level was not reloaded")
+		get_tree().quit(1)
+		return
+	print("Level persistence test passed: %s" % path)
 	get_tree().quit()
 
 
@@ -1561,18 +1610,20 @@ func _build_editor_grid(panel: Control) -> void:
 
 
 func _build_editor_actions(panel: Control) -> void:
-	var new_button := _make_overlay_button("新增", Vector2(28, 826), _editor_create_level)
-	var copy_button := _make_overlay_button("复制", Vector2(122, 826), _editor_duplicate_level)
-	var delete_button := _make_overlay_button("删除", Vector2(216, 826), _editor_delete_level)
-	var save_button := _make_overlay_button("保存", Vector2(310, 826), _editor_save_current_level)
-	var up_button := _make_overlay_button("上移", Vector2(28, 866), func() -> void:
+	var new_button := _make_editor_action_button("新增", Vector2(18, 826), _editor_create_level)
+	var copy_button := _make_editor_action_button("复制", Vector2(98, 826), _editor_duplicate_level)
+	var delete_button := _make_editor_action_button("删除", Vector2(178, 826), _editor_delete_level)
+	var save_button := _make_editor_action_button("保存", Vector2(258, 826), _editor_save_current_level)
+	var import_button := _make_editor_action_button("导入", Vector2(338, 826), _editor_show_import_dialog)
+	var export_button := _make_editor_action_button("导出", Vector2(18, 862), _editor_export_current_level)
+	var up_button := _make_editor_action_button("上移", Vector2(98, 862), func() -> void:
 		_editor_move_selected_level(-1)
 	)
-	var down_button := _make_overlay_button("下移", Vector2(122, 866), func() -> void:
+	var down_button := _make_editor_action_button("下移", Vector2(178, 862), func() -> void:
 		_editor_move_selected_level(1)
 	)
-	var play_button := _make_overlay_button("试玩", Vector2(216, 866), _editor_playtest_current_level)
-	var close_button := _make_overlay_button("关闭", Vector2(310, 866), func() -> void:
+	var play_button := _make_editor_action_button("试玩", Vector2(258, 862), _editor_playtest_current_level)
+	var close_button := _make_editor_action_button("关闭", Vector2(338, 862), func() -> void:
 		editor_open = false
 		_clear_overlay()
 		busy = false
@@ -1581,10 +1632,19 @@ func _build_editor_actions(panel: Control) -> void:
 	panel.add_child(copy_button)
 	panel.add_child(delete_button)
 	panel.add_child(save_button)
+	panel.add_child(import_button)
+	panel.add_child(export_button)
 	panel.add_child(up_button)
 	panel.add_child(down_button)
 	panel.add_child(play_button)
 	panel.add_child(close_button)
+
+
+func _make_editor_action_button(text: String, pos: Vector2, callback: Callable) -> Button:
+	var button := _make_overlay_button(text, pos, callback)
+	button.size = Vector2(72, 28)
+	button.add_theme_font_size_override("font_size", 13)
+	return button
 
 
 func _make_editor_label(text: String, pos: Vector2, size: Vector2, font_size: int, color: Color) -> Label:
@@ -1823,6 +1883,9 @@ func _editor_delete_level() -> void:
 		_set_editor_status("先选择要删除的关卡")
 		return
 	var delete_path := _normalize_res_path(editor_selected_level_path)
+	if not _is_user_level_path(delete_path):
+		_set_editor_status("内置关卡不能删除，可复制后编辑")
+		return
 	var absolute := ProjectSettings.globalize_path(delete_path)
 	if FileAccess.file_exists(delete_path):
 		var remove_error := DirAccess.remove_absolute(absolute)
@@ -1834,6 +1897,7 @@ func _editor_delete_level() -> void:
 			editor_level_index.remove_at(i)
 	_reindex_editor_levels()
 	_save_level_index()
+	_load_level_index()
 	editor_selected_level_path = ""
 	editor_selected_level_name = ""
 	_refresh_editor_level_list()
@@ -1881,6 +1945,9 @@ func _editor_move_selected_level(direction: int) -> void:
 	if target == current:
 		return
 	var entry: Dictionary = editor_level_index[current]
+	if not bool(entry.get("user", false)):
+		_set_editor_status("内置关卡顺序不能调整，可复制后编辑")
+		return
 	editor_level_index.remove_at(current)
 	editor_level_index.insert(target, entry)
 	_reindex_editor_levels()
@@ -1898,17 +1965,23 @@ func _editor_index_position(path: String) -> int:
 
 
 func _reindex_editor_levels() -> void:
+	var user_index := 0
 	for i in editor_level_index.size():
-		editor_level_index[i]["level_index"] = i + 1
+		if bool(editor_level_index[i].get("user", false)) or _is_user_level_path(String(editor_level_index[i].get("path", ""))):
+			user_index += 1
+			editor_level_index[i]["level_index"] = user_index
 
 
 func _editor_save_current_level() -> void:
 	_apply_editor_properties_to_runtime()
 	var config := _build_level_config_from_editor()
 	var path := editor_selected_level_path
-	if path.is_empty():
-		path = _next_level_path()
+	if path.is_empty() or not _is_user_level_path(path):
+		var source_path := path
+		path = _user_level_path_for_config(config, source_path)
 		editor_selected_level_path = path
+	config["id"] = _level_id_for_path(path)
+	config["level_index"] = _level_index_for_path(path)
 	var err := _save_level_file(path, config)
 	if err != OK:
 		_set_editor_status("保存失败：%s" % error_string(err))
@@ -1930,6 +2003,134 @@ func _editor_playtest_current_level() -> void:
 	editor_open = false
 	_clear_overlay()
 	_new_game()
+
+
+func _editor_export_current_level() -> void:
+	_apply_editor_properties_to_runtime()
+	var config := _build_level_config_from_editor()
+	var json_text := JSON.stringify(config, "\t")
+	var filename := "%s.json" % String(config.get("id", "level_export"))
+	if OS.has_feature("web") and _download_text_file(filename, json_text):
+		_set_editor_status("已导出下载：%s" % filename)
+		return
+	_show_level_json_panel("导出关卡", "复制下面的 JSON，可备份或导入到其他浏览器。", json_text, false)
+
+
+func _editor_show_import_dialog() -> void:
+	_show_level_json_panel("导入关卡", "粘贴关卡 JSON 后点击导入，会保存到本机浏览器。", "", true)
+
+
+func _show_level_json_panel(title: String, help_text: String, json_text: String, import_mode: bool) -> void:
+	var veil := ColorRect.new()
+	veil.name = "LevelJsonVeil"
+	veil.color = Color(0.15, 0.08, 0.06, 0.62)
+	veil.size = DESIGN_SIZE
+	overlay_layer.add_child(veil)
+
+	var panel := Control.new()
+	panel.name = "LevelJsonPanel"
+	panel.position = Vector2(28, 180)
+	panel.size = Vector2(392, 560)
+	overlay_layer.add_child(panel)
+	panel.draw.connect(func() -> void:
+		_draw_round_box(panel, Rect2(Vector2.ZERO, panel.size), Color("#fff7df"), Color("#e9a35d"), 18, 4)
+		_draw_round_box(panel, Rect2(Vector2(10, 10), panel.size - Vector2(20, 20)), Color("#fffbed"), Color("#ffcf8b"), 14, 2)
+	)
+
+	var title_label_local := _make_editor_label(title, Vector2(20, 18), Vector2(352, 32), 22, Color("#7e3f47"))
+	title_label_local.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(title_label_local)
+
+	var help_label := _make_editor_label(help_text, Vector2(28, 58), Vector2(336, 44), 12, Color("#2e91b8"))
+	help_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(help_label)
+
+	var edit := TextEdit.new()
+	edit.position = Vector2(24, 112)
+	edit.size = Vector2(344, 352)
+	edit.text = json_text
+	edit.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	edit.editable = import_mode
+	panel.add_child(edit)
+
+	if import_mode:
+		var import_button := _make_overlay_button("导入", Vector2(98, 490), func() -> void:
+			_editor_import_level_json(edit.text)
+			panel.queue_free()
+			veil.queue_free()
+		)
+		panel.add_child(import_button)
+	else:
+		var save_button := _make_overlay_button("下载", Vector2(98, 490), func() -> void:
+			var parsed: Variant = JSON.parse_string(edit.text)
+			var export_id := "level_export"
+			if parsed is Dictionary:
+				export_id = String((parsed as Dictionary).get("id", export_id))
+			if _download_text_file("%s.json" % export_id, edit.text):
+				_set_editor_status("已触发下载")
+			else:
+				_set_editor_status("当前平台请手动复制 JSON")
+		)
+		panel.add_child(save_button)
+
+	var close_button := _make_overlay_button("关闭", Vector2(208, 490), func() -> void:
+		panel.queue_free()
+		veil.queue_free()
+	)
+	panel.add_child(close_button)
+
+
+func _editor_import_level_json(json_text: String) -> void:
+	var parsed: Variant = JSON.parse_string(json_text)
+	if not parsed is Dictionary:
+		_set_editor_status("导入失败：JSON 格式不正确")
+		return
+	var config := (parsed as Dictionary).duplicate(true)
+	var path := _user_level_path_for_config(config)
+	config["id"] = _level_id_for_path(path)
+	config["level_index"] = _level_index_for_path(path)
+	var err := _save_level_file(path, config)
+	if err != OK:
+		_set_editor_status("导入失败：%s" % error_string(err))
+		return
+	_upsert_level_index(config, path)
+	_save_level_index()
+	editor_selected_level_path = path
+	editor_selected_level_name = String(config.get("name", "导入关卡"))
+	playtest_level_path = path
+	active_level_path = path
+	active_level_config = config
+	_clear_overlay()
+	_new_game()
+	_show_level_editor()
+	_set_editor_status("已导入：%s" % editor_selected_level_name)
+
+
+func _download_text_file(filename: String, text: String) -> bool:
+	if not OS.has_feature("web"):
+		return false
+	if not Engine.has_singleton("JavaScriptBridge"):
+		return false
+	var bridge := Engine.get_singleton("JavaScriptBridge")
+	var escaped_name := JSON.stringify(filename)
+	var escaped_text := JSON.stringify(text)
+	var script := """
+	(function () {
+		const name = %s;
+		const text = %s;
+		const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = name;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+		return true;
+	})()
+	""" % [escaped_name, escaped_text]
+	return bool(bridge.eval(script))
 
 
 func _apply_editor_properties_to_runtime() -> void:
@@ -1992,20 +2193,42 @@ func _current_level_name() -> String:
 
 func _load_level_index() -> void:
 	editor_level_index.clear()
-	var data: Variant = _read_json_file(LEVEL_INDEX_PATH)
-	if data is Dictionary:
-		var levels: Array = data.get("levels", [])
-		for item in levels:
-			if item is Dictionary:
-				editor_level_index.append(item)
+	var entries_by_id := {}
+	_merge_level_index_source(entries_by_id, LEVEL_INDEX_PATH, false)
+	_merge_level_index_source(entries_by_id, USER_LEVEL_INDEX_PATH, true)
+	for entry in entries_by_id.values():
+		editor_level_index.append(entry)
 	editor_level_index.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return int(a.get("level_index", 0)) < int(b.get("level_index", 0))
 	)
 
 
 func _save_level_index() -> Error:
-	var data: Dictionary = {"levels": editor_level_index}
-	return _write_json_file(LEVEL_INDEX_PATH, data)
+	var user_levels: Array = []
+	for entry in editor_level_index:
+		if bool(entry.get("user", false)) or _is_user_level_path(String(entry.get("path", ""))):
+			user_levels.append(entry)
+	var data: Dictionary = {"levels": user_levels}
+	return _write_json_file(USER_LEVEL_INDEX_PATH, data)
+
+
+func _merge_level_index_source(entries_by_id: Dictionary, index_path: String, user_source: bool) -> void:
+	var data: Variant = _read_json_file(index_path)
+	if not data is Dictionary:
+		return
+	var levels: Array = data.get("levels", [])
+	for item in levels:
+		if not item is Dictionary:
+			continue
+		var entry := (item as Dictionary).duplicate(true)
+		var path := _normalize_level_path(String(entry.get("path", "")), user_source)
+		if path.is_empty():
+			continue
+		entry["path"] = path
+		entry["user"] = user_source or _is_user_level_path(path)
+		var id := String(entry.get("id", _level_id_for_path(path)))
+		entry["id"] = id
+		entries_by_id[id] = entry
 
 
 func _load_level_file(path: String) -> Dictionary:
@@ -2048,6 +2271,19 @@ func _normalize_res_path(path: String) -> String:
 	return "res://%s" % path.trim_prefix("/")
 
 
+func _normalize_level_path(path: String, user_source: bool = false) -> String:
+	if path.is_empty():
+		return ""
+	if path.begins_with("res://") or path.begins_with("user://") or path.begins_with("/"):
+		return path
+	var dir_path := USER_LEVEL_DIR_PATH if user_source else LEVEL_DIR_PATH
+	return "%s/%s" % [dir_path, path.trim_prefix("/")]
+
+
+func _is_user_level_path(path: String) -> bool:
+	return _normalize_res_path(path).begins_with(USER_LEVEL_DIR_PATH)
+
+
 func _upsert_level_index(config: Dictionary, path: String) -> void:
 	var normalized := _normalize_res_path(path)
 	var entry := {
@@ -2055,10 +2291,11 @@ func _upsert_level_index(config: Dictionary, path: String) -> void:
 		"name": String(config.get("name", "未命名关卡")),
 		"description": String(config.get("description", "")),
 		"level_index": int(config.get("level_index", _level_index_for_path(normalized))),
-		"path": normalized
+		"path": normalized,
+		"user": _is_user_level_path(normalized)
 	}
 	for i in editor_level_index.size():
-		if String(editor_level_index[i].get("path", "")) == normalized:
+		if String(editor_level_index[i].get("id", "")) == String(entry.get("id", "")) or String(editor_level_index[i].get("path", "")) == normalized:
 			editor_level_index[i] = entry
 			return
 	editor_level_index.append(entry)
@@ -2072,7 +2309,16 @@ func _next_level_path() -> String:
 	for entry in editor_level_index:
 		max_index = max(max_index, int(entry.get("level_index", 0)))
 	var next_index := max_index + 1
-	return "%s/level_%03d.json" % [LEVEL_DIR_PATH, next_index]
+	return "%s/level_%03d.json" % [USER_LEVEL_DIR_PATH, next_index]
+
+
+func _user_level_path_for_config(config: Dictionary, source_path: String = "") -> String:
+	var id := String(config.get("id", ""))
+	if id.is_empty() and not source_path.is_empty():
+		id = _level_id_for_path(source_path)
+	if id.is_empty():
+		id = "level_%03d" % _level_index_for_path("")
+	return "%s/%s.json" % [USER_LEVEL_DIR_PATH, id]
 
 
 func _level_index_for_path(path: String) -> int:
