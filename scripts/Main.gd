@@ -15,6 +15,7 @@ const LEVEL_DIR_PATH := "res://data/levels"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
 const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
 const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
+const UI_FONT_PATH := "res://assets/fonts/NotoSansCJKsc-Regular.otf"
 const UI_BOARD_FRAME_PATH := "res://assets/art/ui/ui_board_frame.png"
 const UI_POPUP_PANEL_PATH := "res://assets/art/ui/ui_popup_panel.png"
 const UI_PROGRESS_YELLOW_PATH := "res://assets/art/ui/ui_progress_yellow.png"
@@ -55,6 +56,7 @@ var textures: Array[Texture2D] = []
 var badge_textures: Dictionary = {}
 var blocker_textures: Dictionary = {}
 var ui_textures: Dictionary = {}
+var ui_font: Font
 var rng := RandomNumberGenerator.new()
 var score := 0
 var high_score := SCORE_TARGET
@@ -161,6 +163,7 @@ func _ready() -> void:
 		BOARD_ROWS * TILE_SIZE + (BOARD_ROWS - 1) * TILE_GAP + BOARD_PADDING * 2.0
 	)
 	_create_textures()
+	_apply_ui_theme()
 	_build_interface()
 	await get_tree().process_frame
 	_layout_root()
@@ -787,6 +790,18 @@ func _motion_has_left_button(event: InputEventMouseMotion) -> bool:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED and is_node_ready():
 		_layout_root()
+
+
+func _apply_ui_theme() -> void:
+	var loaded_font := load(UI_FONT_PATH) as Font
+	if loaded_font == null:
+		push_warning("UI font could not be loaded: %s" % UI_FONT_PATH)
+		return
+	ui_font = loaded_font
+	var ui_theme := Theme.new()
+	ui_theme.default_font = ui_font
+	ui_theme.default_font_size = 14
+	theme = ui_theme
 
 
 func _build_interface() -> void:

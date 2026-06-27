@@ -163,6 +163,7 @@ The following commands passed after this change:
 ### Goal
 
 - Make the Godot game deployable to GitHub Pages from the repository.
+- Fix missing Chinese glyphs in the GitHub Pages build.
 
 ### Implemented
 
@@ -170,10 +171,13 @@ The following commands passed after this change:
 - Chose a local-export deployment flow: export the Godot Web build locally and publish the generated static files from the `gh-pages` branch.
 - Removed the GitHub Actions export workflow so Pages does not need to download Godot or export templates on GitHub runners.
 - Added `data/levels/*.json` to the Web preset include filter so authored level JSON files are packed into the exported game.
+- Added `assets/fonts/NotoSansCJKsc-Regular.otf` and set it as the runtime UI theme default font so Chinese labels render correctly in browser builds.
 
 ### Verification
 
 - Local Web export was used for verification before publishing.
+- Local screenshot check passed with Chinese glyphs visible:
+  - `/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --screenshot=/tmp/codex-font-check.png`
 
 Additional screenshot checks were run for:
 
