@@ -10,6 +10,8 @@ const BOARD_TOP := 204.0
 const SCORE_TARGET := 10000
 const GOAL_TARGET := 24
 const SAVE_PATH := "user://save.cfg"
+const LEVEL_INDEX_PATH := "res://data/levels/index.json"
+const LEVEL_DIR_PATH := "res://data/levels"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
 const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
 const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
@@ -29,6 +31,13 @@ const MAX_FEVER := 100.0
 const POWERUP_SHUFFLE := "shuffle"
 const POWERUP_BLAST := "blast"
 const POWERUP_PAINT := "paint"
+const TERRAIN_NORMAL := 0
+const TERRAIN_DISABLED := 1
+const EDITOR_BRUSH_NORMAL := "normal"
+const EDITOR_BRUSH_DISABLED := "disabled"
+const EDITOR_BRUSH_CRATE_1 := "crate_1"
+const EDITOR_BRUSH_CRATE_2 := "crate_2"
+const COLOR_NAMES := ["红", "黄", "绿", "蓝", "紫"]
 const COLORS := [
 	Color("#ff5f73"),
 	Color("#ffd95a"),
@@ -40,6 +49,7 @@ const COLORS := [
 enum TileKind { NORMAL, BOMB, ROW_CLEAR, COLUMN_CLEAR, RAINBOW, BLOCKER }
 
 var board: Array = []
+var terrain: Array = []
 var tile_nodes: Array = []
 var textures: Array[Texture2D] = []
 var badge_textures: Dictionary = {}
@@ -79,6 +89,33 @@ var drag_axis := ""
 var drag_steps := 0
 var preview_axis := ""
 var preview_index := -1
+var active_color_pool: Array[int] = []
+var active_level_config: Dictionary = {}
+var active_level_path := ""
+var playtest_level_path := ""
+var editor_open := false
+var editor_level_index: Array = []
+var editor_selected_level_path := ""
+var editor_selected_level_name := ""
+var editor_brush := EDITOR_BRUSH_NORMAL
+var editor_colors_enabled: Array[bool] = [true, true, true, true, true]
+var editor_target_color := 0
+var editor_score_target := SCORE_TARGET
+var editor_goal_target := GOAL_TARGET
+var editor_blocker_target := 0
+var editor_move_limit := 35
+var editor_level_name_edit: LineEdit
+var editor_score_spin: SpinBox
+var editor_goal_spin: SpinBox
+var editor_blocker_spin: SpinBox
+var editor_moves_spin: SpinBox
+var editor_target_color_option: OptionButton
+var editor_list_box: VBoxContainer
+var editor_grid: GridContainer
+var editor_status_label: Label
+var editor_color_checks: Array[CheckBox] = []
+var editor_painting := false
+var editor_painted_cells := {}
 
 var content_root: Control
 var backdrop: Control
@@ -118,6 +155,7 @@ func _ready() -> void:
 	rng.randomize()
 	_load_save()
 	_apply_stage_arg()
+	_apply_level_args()
 	board_size = Vector2(
 		BOARD_COLS * TILE_SIZE + (BOARD_COLS - 1) * TILE_GAP + BOARD_PADDING * 2.0,
 		BOARD_ROWS * TILE_SIZE + (BOARD_ROWS - 1) * TILE_GAP + BOARD_PADDING * 2.0
@@ -126,6 +164,10 @@ func _ready() -> void:
 	_build_interface()
 	await get_tree().process_frame
 	_layout_root()
+	if OS.get_cmdline_user_args().has("--smoke-test") and not _has_stage_arg() and playtest_level_path.is_empty():
+		stage = 1
+	if OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test"):
+		rng.seed = 1001 + stage
 	_new_game()
 	_maybe_run_smoke_test()
 	_maybe_run_drag_input_test()
@@ -153,6 +195,14 @@ func _apply_stage_arg() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--stage="):
 			stage = max(1, int(arg.get_slice("=", 1)))
+
+
+func _apply_level_args() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--level="):
+			playtest_level_path = arg.get_slice("=", 1)
+		elif arg.begins_with("--level-editor"):
+			editor_open = true
 
 
 func _maybe_capture_viewport() -> void:
@@ -211,6 +261,13 @@ func _has_capture_arg() -> bool:
 
 func _is_verification_mode() -> bool:
 	return OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test") or _has_capture_arg()
+
+
+func _has_stage_arg() -> bool:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--stage="):
+			return true
+	return false
 
 
 func _maybe_run_drag_input_test() -> void:
@@ -278,8 +335,8 @@ func _maybe_run_smoke_test() -> void:
 		push_error("Smoke test failed: connected group detection missed non-line group")
 		get_tree().quit(1)
 		return
-	_prepare_smoke_shift_match()
-	await _commit_line_shift(Vector2i(0, 0), "row", 1)
+	var smoke_row := _prepare_smoke_shift_match()
+	await _commit_line_shift(Vector2i(_first_valid_col_in_row(smoke_row), smoke_row), "row", 1)
 	if score <= before_score:
 		push_error("Smoke test failed: row shift did not create match")
 		get_tree().quit(1)
@@ -362,7 +419,7 @@ func _maybe_run_smoke_test() -> void:
 		for col in BOARD_COLS:
 			if not board[row][col].is_empty():
 				filled += 1
-	if score <= before_score or filled != BOARD_COLS * BOARD_ROWS:
+	if score <= before_score or filled != _playable_cell_count():
 		push_error("Smoke test failed: score=%d filled=%d" % [score, filled])
 		get_tree().quit(1)
 		return
@@ -388,6 +445,15 @@ func _count_blockers() -> int:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			if int(board[row][col].kind) == TileKind.BLOCKER:
+				total += 1
+	return total
+
+
+func _playable_cell_count() -> int:
+	var total := 0
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			if _terrain_allows_tile(Vector2i(col, row)):
 				total += 1
 	return total
 
@@ -429,11 +495,34 @@ func _board_signature() -> String:
 	return "|".join(parts)
 
 
-func _prepare_smoke_shift_match() -> void:
-	_prepare_cluster_shift_match(0, 0, 0)
+func _prepare_smoke_shift_match() -> int:
+	for row in BOARD_ROWS:
+		if _valid_cells_in_row(row).size() >= 3:
+			_prepare_cluster_shift_match(row, _pooled_color_at(0), 0)
+			return row
+	return 0
+
+
+func _valid_cells_in_row(row: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for col in BOARD_COLS:
+		var cell := Vector2i(col, row)
+		if _valid_cell(cell):
+			cells.append(cell)
+	return cells
+
+
+func _first_valid_col_in_row(row: int) -> int:
+	for col in BOARD_COLS:
+		if _valid_cell(Vector2i(col, row)):
+			return col
+	return 0
 
 
 func _smoke_connected_group_detection() -> bool:
+	var shape := _find_smoke_l_shape()
+	if shape.is_empty():
+		return true
 	var backup := []
 	for row in BOARD_ROWS:
 		var line := []
@@ -442,16 +531,34 @@ func _smoke_connected_group_detection() -> bool:
 		backup.append(line)
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
+			if not _valid_cell(Vector2i(col, row)):
+				continue
 			board[row][col].kind = TileKind.NORMAL
 			board[row][col].hp = 0
-			board[row][col].color = (row * 3 + col) % COLORS.size()
-	board[0][0].color = 0
-	board[1][0].color = 0
-	board[1][1].color = 0
+			board[row][col].color = _pooled_color_at(row * 3 + col)
+	for cell in shape:
+		board[cell.y][cell.x].color = _pooled_color_at(0)
 	var matches := _find_matches()
 	board = backup
 	_update_all_tile_nodes()
-	return matches.has(Vector2i(0, 0)) and matches.has(Vector2i(0, 1)) and matches.has(Vector2i(1, 1))
+	for cell in shape:
+		if not matches.has(cell):
+			return false
+	return true
+
+
+func _find_smoke_l_shape() -> Array[Vector2i]:
+	for row in range(BOARD_ROWS - 1):
+		for col in range(BOARD_COLS - 1):
+			var cells: Array[Vector2i] = [Vector2i(col, row), Vector2i(col, row + 1), Vector2i(col + 1, row + 1)]
+			var valid := true
+			for cell in cells:
+				if not _valid_cell(cell) or int(_tile(cell).kind) == TileKind.BLOCKER:
+					valid = false
+					break
+			if valid:
+				return cells
+	return []
 
 
 func _smoke_break_blocker() -> bool:
@@ -495,11 +602,14 @@ func _prepare_blocker_cluster_shift_match(blocker: Vector2i) -> int:
 	_prepare_cluster_shift_match(match_row, 0, 0)
 	for row in [max(0, match_row - 1), match_row, min(BOARD_ROWS - 1, match_row + 1)]:
 		for col in BOARD_COLS:
-			if int(board[row][col].kind) != TileKind.BLOCKER:
-				board[row][col].color = (row * 3 + col + 2) % COLORS.size()
-	board[match_row][0].color = 0
-	board[match_row][1].color = 0
-	board[match_row][BOARD_COLS - 1].color = 0
+			if _valid_cell(Vector2i(col, row)) and int(board[row][col].kind) != TileKind.BLOCKER:
+				board[row][col].color = _pooled_color_at(row * 3 + col + 2)
+	if _valid_cell(Vector2i(0, match_row)):
+		board[match_row][0].color = _pooled_color_at(0)
+	if _valid_cell(Vector2i(1, match_row)):
+		board[match_row][1].color = _pooled_color_at(0)
+	if _valid_cell(Vector2i(BOARD_COLS - 1, match_row)):
+		board[match_row][BOARD_COLS - 1].color = _pooled_color_at(0)
 	for row in [max(0, match_row - 1), match_row, min(BOARD_ROWS - 1, match_row + 1)]:
 		for col in BOARD_COLS:
 			_update_tile_node(Vector2i(col, row))
@@ -507,20 +617,28 @@ func _prepare_blocker_cluster_shift_match(blocker: Vector2i) -> int:
 
 
 func _prepare_cluster_shift_match(row: int, color: int, offset: int) -> void:
+	var row_cells := _valid_cells_in_row(row)
+	if row_cells.size() < 3:
+		return
 	for col in BOARD_COLS:
+		if not _valid_cell(Vector2i(col, row)):
+			continue
 		board[row][col].kind = TileKind.NORMAL
 		board[row][col].hp = 0
-		board[row][col].color = (col + offset + 1) % COLORS.size()
+		board[row][col].color = _pooled_color_at(col + offset + 1)
 	var upper_row: int = max(0, row - 1)
 	var lower_row: int = min(BOARD_ROWS - 1, row + 1)
 	for col in BOARD_COLS:
-		if upper_row != row and int(board[upper_row][col].kind) != TileKind.BLOCKER:
-			board[upper_row][col].color = (col + offset + 3) % COLORS.size()
-		if lower_row != row and int(board[lower_row][col].kind) != TileKind.BLOCKER:
-			board[lower_row][col].color = (col + offset + 5) % COLORS.size()
-	board[row][0].color = color
-	board[row][1].color = color
-	board[row][BOARD_COLS - 1].color = color
+		if upper_row != row and _valid_cell(Vector2i(col, upper_row)) and int(board[upper_row][col].kind) != TileKind.BLOCKER:
+			board[upper_row][col].color = _pooled_color_at(col + offset + 3)
+		if lower_row != row and _valid_cell(Vector2i(col, lower_row)) and int(board[lower_row][col].kind) != TileKind.BLOCKER:
+			board[lower_row][col].color = _pooled_color_at(col + offset + 5)
+	var left := row_cells[0]
+	var middle := row_cells[1]
+	var right := row_cells[row_cells.size() - 1]
+	board[left.y][left.x].color = color
+	board[middle.y][middle.x].color = color
+	board[right.y][right.x].color = color
 	for col in BOARD_COLS:
 		_update_tile_node(Vector2i(col, row))
 	if upper_row != row:
@@ -606,6 +724,8 @@ func _powerup_accent(powerup: String) -> Color:
 
 
 func _input(event: InputEvent) -> void:
+	if editor_open and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_editor_end_paint()
 	if busy or ended:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -948,6 +1068,7 @@ func _build_interface() -> void:
 	overlay_layer = Control.new()
 	overlay_layer.name = "OverlayLayer"
 	overlay_layer.size = DESIGN_SIZE
+	overlay_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content_root.add_child(overlay_layer)
 
 	sfx_player = AudioStreamPlayer.new()
@@ -1039,14 +1160,9 @@ func _new_game() -> void:
 		_clear_overlay()
 	busy = false
 	score = 0
-	high_score = SCORE_TARGET + (stage - 1) * 1800
-	moves = max(24, 36 - stage)
 	combo = 0
-	goal_color = rng.randi_range(0, COLORS.size() - 1)
 	goal_collected = 0
-	goal_target = GOAL_TARGET + (stage - 1) * 3
 	blocker_cleared = 0
-	blocker_target = _stage_blocker_target()
 	shuffle_charges = 2
 	blast_charges = 2 + bonus_blast_next
 	paint_charges = 1 + bonus_paint_next
@@ -1061,34 +1177,179 @@ func _new_game() -> void:
 	blocker_milestone_shown = false
 	fever_warning_shown = false
 	board.clear()
+	terrain.clear()
 	_clear_tiles()
+	var loaded_level := _load_playtest_level_config()
+	if loaded_level.is_empty():
+		active_level_config = {}
+		active_level_path = ""
+		high_score = SCORE_TARGET + (stage - 1) * 1800
+		moves = max(24, 36 - stage)
+		goal_color = rng.randi_range(0, COLORS.size() - 1)
+		goal_target = GOAL_TARGET + (stage - 1) * 3
+		blocker_target = _stage_blocker_target()
+		active_color_pool = _all_color_indices()
+		_reset_default_terrain()
+	else:
+		active_level_config = loaded_level
+		_apply_level_config(loaded_level)
 	for row in BOARD_ROWS:
 		var line := []
 		var node_line: Array = []
 		for col in BOARD_COLS:
-			var tile := _create_tile(col, row)
+			var cell := Vector2i(col, row)
+			var tile := _create_level_tile(cell)
 			line.append(tile)
 			var node := _make_tile_node(tile)
 			board_layer.add_child(node)
 			node.position = _tile_position(col, row)
+			node.visible = not tile.is_empty()
 			node_line.append(node)
 		board.append(line)
 		tile_nodes.append(node_line)
-	_ensure_blocker_objective_supply()
+	if loaded_level.is_empty():
+		_ensure_blocker_objective_supply()
 	_stabilize_opening_board()
 	_update_all_tile_nodes()
 	if is_instance_valid(mission_label):
 		mission_label.text = _stage_mission_line()
 	_update_hud()
+	if editor_open and not OS.get_cmdline_user_args().has("--smoke-test") and not OS.get_cmdline_user_args().has("--drag-input-test"):
+		_show_level_editor()
+		return
 	if not OS.get_cmdline_user_args().has("--smoke-test") and not _has_capture_arg():
 		_show_start_card()
 
 
 func _next_stage() -> void:
 	stage += 1
+	playtest_level_path = ""
 	_save_progress()
 	_clear_overlay()
 	_new_game()
+
+
+func _load_playtest_level_config() -> Dictionary:
+	if playtest_level_path.is_empty():
+		return {}
+	var config := _load_level_file(playtest_level_path)
+	if not config.is_empty():
+		active_level_path = playtest_level_path
+	return config
+
+
+func _apply_level_config(config: Dictionary) -> void:
+	var level_index: int = int(config.get("level_index", stage))
+	stage = max(1, level_index)
+	high_score = max(0, int(config.get("score_target", SCORE_TARGET)))
+	moves = max(1, int(config.get("move_limit", 35)))
+	goal_target = max(0, int(config.get("goal_target", GOAL_TARGET)))
+	blocker_target = max(0, int(config.get("blocker_target", 0)))
+	active_color_pool = _sanitize_color_pool(config.get("colors", []))
+	if active_color_pool.is_empty():
+		active_color_pool = _all_color_indices()
+	var raw_goal_color: int = int(config.get("goal_color", active_color_pool[0]))
+	goal_color = raw_goal_color if active_color_pool.has(raw_goal_color) else active_color_pool[0]
+	terrain = _terrain_from_level(config)
+
+
+func _create_level_tile(cell: Vector2i) -> Dictionary:
+	if not _terrain_allows_tile(cell):
+		return {}
+	var blockers: Dictionary = active_level_config.get("blockers", {}) if not active_level_config.is_empty() else {}
+	var key := _cell_key(cell)
+	if blockers.has(key):
+		var hp: int = clamp(int(blockers[key]), 1, 2)
+		return {
+			"color": _random_color_from_pool(),
+			"kind": TileKind.BLOCKER,
+			"hp": hp,
+			"id": Time.get_ticks_usec() + rng.randi()
+		}
+	return _create_tile(cell.x, cell.y, false, false)
+
+
+func _reset_default_terrain() -> void:
+	terrain.clear()
+	for row in BOARD_ROWS:
+		var line: Array[int] = []
+		for col in BOARD_COLS:
+			line.append(TERRAIN_NORMAL)
+		terrain.append(line)
+
+
+func _terrain_from_level(config: Dictionary) -> Array:
+	var result: Array = []
+	var disabled := {}
+	var disabled_cells: Array = config.get("disabled_cells", [])
+	for item in disabled_cells:
+		var cell := _cell_from_level_value(item)
+		if _in_board(cell):
+			disabled[cell] = true
+	for row in BOARD_ROWS:
+		var line: Array[int] = []
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			line.append(TERRAIN_DISABLED if disabled.has(cell) else TERRAIN_NORMAL)
+		result.append(line)
+	return result
+
+
+func _sanitize_color_pool(value: Variant) -> Array[int]:
+	var result: Array[int] = []
+	if value is Array:
+		for item in value:
+			var index := int(item)
+			if index >= 0 and index < COLORS.size() and not result.has(index):
+				result.append(index)
+	return result
+
+
+func _all_color_indices() -> Array[int]:
+	var result: Array[int] = []
+	for i in COLORS.size():
+		result.append(i)
+	return result
+
+
+func _random_color_from_pool() -> int:
+	if active_color_pool.is_empty():
+		active_color_pool = _all_color_indices()
+	return active_color_pool[rng.randi_range(0, active_color_pool.size() - 1)]
+
+
+func _pooled_color_at(index: int) -> int:
+	if active_color_pool.is_empty():
+		active_color_pool = _all_color_indices()
+	return active_color_pool[posmod(index, active_color_pool.size())]
+
+
+func _cell_key(cell: Vector2i) -> String:
+	return "%d,%d" % [cell.x, cell.y]
+
+
+func _cell_from_level_value(value: Variant) -> Vector2i:
+	if value is String:
+		var text := String(value)
+		if text.contains(","):
+			return Vector2i(int(text.get_slice(",", 0)), int(text.get_slice(",", 1)))
+	if value is Array and value.size() >= 2:
+		return Vector2i(int(value[0]), int(value[1]))
+	if value is Dictionary:
+		return Vector2i(int(value.get("x", -1)), int(value.get("y", -1)))
+	return Vector2i(-1, -1)
+
+
+func _in_board(cell: Vector2i) -> bool:
+	return cell.x >= 0 and cell.x < BOARD_COLS and cell.y >= 0 and cell.y < BOARD_ROWS
+
+
+func _terrain_allows_tile(cell: Vector2i) -> bool:
+	if not _in_board(cell):
+		return false
+	if terrain.size() <= cell.y or terrain[cell.y].size() <= cell.x:
+		return true
+	return int(terrain[cell.y][cell.x]) != TERRAIN_DISABLED
 
 
 func _show_pause_menu() -> void:
@@ -1114,10 +1375,15 @@ func _show_pause_menu() -> void:
 		_clear_overlay()
 		_show_help_card()
 	)
+	var editor := _make_overlay_button("编辑器", Vector2(181, 590), func() -> void:
+		_clear_overlay()
+		_show_level_editor()
+	)
 	overlay_layer.add_child(resume)
 	overlay_layer.add_child(restart)
 	overlay_layer.add_child(next)
 	overlay_layer.add_child(help)
+	overlay_layer.add_child(editor)
 
 
 func _show_help_card() -> void:
@@ -1134,6 +1400,684 @@ func _show_help_card() -> void:
 		_show_pause_menu()
 	)
 	overlay_layer.add_child(back)
+
+
+func _show_level_editor() -> void:
+	editor_open = true
+	busy = true
+	_load_level_index()
+	_sync_editor_fields_from_runtime()
+	_clear_overlay()
+	editor_open = true
+	var veil := ColorRect.new()
+	veil.name = "LevelEditorVeil"
+	veil.color = Color(0.35, 0.18, 0.12, 0.58)
+	veil.size = DESIGN_SIZE
+	overlay_layer.add_child(veil)
+
+	var panel := Control.new()
+	panel.name = "LevelEditorPanel"
+	panel.position = Vector2(10, 22)
+	panel.size = Vector2(428, 900)
+	overlay_layer.add_child(panel)
+	panel.draw.connect(func() -> void:
+		_draw_round_box(panel, Rect2(Vector2.ZERO, panel.size), Color("#fff7df"), Color("#e9a35d"), 18, 4)
+		_draw_round_box(panel, Rect2(Vector2(10, 10), panel.size - Vector2(20, 20)), Color("#fffbed"), Color("#ffcf8b"), 14, 2)
+	)
+
+	var title := _make_editor_label("关卡编辑器", Vector2(20, 16), Vector2(160, 30), 24, Color("#7e3f47"))
+	panel.add_child(title)
+	editor_status_label = _make_editor_label("选择关卡或直接编辑当前预览", Vector2(174, 20), Vector2(226, 24), 12, Color("#2e91b8"))
+	editor_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	panel.add_child(editor_status_label)
+
+	_build_editor_level_list(panel)
+	_build_editor_properties(panel)
+	_build_editor_brushes(panel)
+	_build_editor_grid(panel)
+	_build_editor_actions(panel)
+	_refresh_editor_grid()
+
+
+func _build_editor_level_list(panel: Control) -> void:
+	var list_title := _make_editor_label("关卡列表", Vector2(22, 58), Vector2(96, 22), 16, Color("#7e3f47"))
+	panel.add_child(list_title)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(22, 84)
+	scroll.size = Vector2(144, 226)
+	panel.add_child(scroll)
+	editor_list_box = VBoxContainer.new()
+	editor_list_box.add_theme_constant_override("separation", 4)
+	scroll.add_child(editor_list_box)
+	_refresh_editor_level_list()
+
+
+func _build_editor_properties(panel: Control) -> void:
+	panel.add_child(_make_editor_label("关卡名", Vector2(180, 58), Vector2(60, 22), 14, Color("#7e3f47")))
+	editor_level_name_edit = LineEdit.new()
+	editor_level_name_edit.position = Vector2(240, 55)
+	editor_level_name_edit.size = Vector2(154, 30)
+	editor_level_name_edit.text = editor_selected_level_name if not editor_selected_level_name.is_empty() else "新关卡"
+	panel.add_child(editor_level_name_edit)
+
+	panel.add_child(_make_editor_label("颜色池", Vector2(180, 94), Vector2(60, 22), 14, Color("#7e3f47")))
+	editor_color_checks.clear()
+	for i in COLORS.size():
+		var check := CheckBox.new()
+		check.text = COLOR_NAMES[i]
+		check.position = Vector2(238 + (i % 3) * 54, 90 + int(i / 3) * 28)
+		check.size = Vector2(58, 26)
+		check.button_pressed = editor_colors_enabled[i]
+		check.add_theme_font_size_override("font_size", 12)
+		check.toggled.connect(func(enabled: bool, index: int = i) -> void:
+			editor_colors_enabled[index] = enabled
+			_editor_ensure_color_selection()
+		)
+		panel.add_child(check)
+		editor_color_checks.append(check)
+
+	panel.add_child(_make_editor_label("目标色", Vector2(180, 154), Vector2(60, 22), 14, Color("#7e3f47")))
+	editor_target_color_option = OptionButton.new()
+	editor_target_color_option.position = Vector2(240, 150)
+	editor_target_color_option.size = Vector2(88, 30)
+	for i in COLORS.size():
+		editor_target_color_option.add_item(COLOR_NAMES[i], i)
+	editor_target_color_option.selected = editor_target_color
+	panel.add_child(editor_target_color_option)
+
+	editor_moves_spin = _make_editor_spin(Vector2(240, 188), 1, 99, editor_move_limit)
+	editor_score_spin = _make_editor_spin(Vector2(240, 226), 0, 999999, editor_score_target)
+	editor_goal_spin = _make_editor_spin(Vector2(240, 264), 0, 999, editor_goal_target)
+	editor_blocker_spin = _make_editor_spin(Vector2(240, 302), 0, 999, editor_blocker_target)
+	panel.add_child(_make_editor_label("步数", Vector2(180, 192), Vector2(60, 22), 14, Color("#7e3f47")))
+	panel.add_child(editor_moves_spin)
+	panel.add_child(_make_editor_label("分数", Vector2(180, 230), Vector2(60, 22), 14, Color("#7e3f47")))
+	panel.add_child(editor_score_spin)
+	panel.add_child(_make_editor_label("毛球目标", Vector2(168, 268), Vector2(72, 22), 14, Color("#7e3f47")))
+	panel.add_child(editor_goal_spin)
+	panel.add_child(_make_editor_label("木箱目标", Vector2(168, 306), Vector2(72, 22), 14, Color("#7e3f47")))
+	panel.add_child(editor_blocker_spin)
+
+
+func _build_editor_brushes(panel: Control) -> void:
+	panel.add_child(_make_editor_label("画笔", Vector2(24, 332), Vector2(60, 24), 16, Color("#7e3f47")))
+	var brushes := [
+		["普通格", EDITOR_BRUSH_NORMAL, Color("#ffd45d")],
+		["禁用格", EDITOR_BRUSH_DISABLED, Color("#9a8f85")],
+		["木箱1", EDITOR_BRUSH_CRATE_1, Color("#f0a35f")],
+		["木箱2", EDITOR_BRUSH_CRATE_2, Color("#c17842")]
+	]
+	for i in brushes.size():
+		var data: Array = brushes[i]
+		var button := _make_overlay_button(String(data[0]), Vector2(22 + i * 98, 360), func(brush: String = String(data[1])) -> void:
+			editor_brush = brush
+			_set_editor_status("当前画笔：%s" % _editor_brush_name(editor_brush))
+		)
+		button.size = Vector2(88, 34)
+		_style_button(button, data[2])
+		panel.add_child(button)
+
+
+func _build_editor_grid(panel: Control) -> void:
+	panel.add_child(_make_editor_label("棋盘地形与障碍", Vector2(24, 414), Vector2(160, 24), 16, Color("#7e3f47")))
+	editor_grid = GridContainer.new()
+	editor_grid.columns = BOARD_COLS
+	editor_grid.position = Vector2(30, 444)
+	editor_grid.size = Vector2(378, 378)
+	editor_grid.add_theme_constant_override("h_separation", 4)
+	editor_grid.add_theme_constant_override("v_separation", 4)
+	panel.add_child(editor_grid)
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var button := Button.new()
+			button.custom_minimum_size = Vector2(38, 38)
+			button.focus_mode = Control.FOCUS_NONE
+			button.set_meta("cell", Vector2i(col, row))
+			button.button_down.connect(func(cell: Vector2i = Vector2i(col, row)) -> void:
+				_editor_begin_paint(cell)
+			)
+			button.button_up.connect(func() -> void:
+				_editor_end_paint()
+			)
+			button.mouse_entered.connect(func(cell: Vector2i = Vector2i(col, row)) -> void:
+				_editor_paint_hover(cell)
+			)
+			editor_grid.add_child(button)
+
+
+func _build_editor_actions(panel: Control) -> void:
+	var new_button := _make_overlay_button("新增", Vector2(28, 826), _editor_create_level)
+	var copy_button := _make_overlay_button("复制", Vector2(122, 826), _editor_duplicate_level)
+	var delete_button := _make_overlay_button("删除", Vector2(216, 826), _editor_delete_level)
+	var save_button := _make_overlay_button("保存", Vector2(310, 826), _editor_save_current_level)
+	var up_button := _make_overlay_button("上移", Vector2(28, 866), func() -> void:
+		_editor_move_selected_level(-1)
+	)
+	var down_button := _make_overlay_button("下移", Vector2(122, 866), func() -> void:
+		_editor_move_selected_level(1)
+	)
+	var play_button := _make_overlay_button("试玩", Vector2(216, 866), _editor_playtest_current_level)
+	var close_button := _make_overlay_button("关闭", Vector2(310, 866), func() -> void:
+		editor_open = false
+		_clear_overlay()
+		busy = false
+	)
+	panel.add_child(new_button)
+	panel.add_child(copy_button)
+	panel.add_child(delete_button)
+	panel.add_child(save_button)
+	panel.add_child(up_button)
+	panel.add_child(down_button)
+	panel.add_child(play_button)
+	panel.add_child(close_button)
+
+
+func _make_editor_label(text: String, pos: Vector2, size: Vector2, font_size: int, color: Color) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.position = pos
+	label.size = size
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	return label
+
+
+func _make_editor_spin(pos: Vector2, min_value: float, max_value: float, value: float) -> SpinBox:
+	var spin := SpinBox.new()
+	spin.position = pos
+	spin.size = Vector2(100, 30)
+	spin.min_value = min_value
+	spin.max_value = max_value
+	spin.step = 1
+	spin.value = value
+	spin.rounded = true
+	return spin
+
+
+func _refresh_editor_level_list() -> void:
+	if not is_instance_valid(editor_list_box):
+		return
+	for child in editor_list_box.get_children():
+		child.queue_free()
+	for entry in editor_level_index:
+		var path := String(entry.get("path", ""))
+		var label := "第%d关 %s" % [int(entry.get("level_index", 1)), String(entry.get("name", "未命名"))]
+		var button := Button.new()
+		button.text = label
+		button.custom_minimum_size = Vector2(134, 30)
+		button.focus_mode = Control.FOCUS_NONE
+		_style_button(button, Color("#9ee8ff") if path == editor_selected_level_path else Color("#ffd45d"))
+		button.pressed.connect(func(selected_path: String = path, selected_name: String = String(entry.get("name", ""))) -> void:
+			editor_selected_level_path = selected_path
+			editor_selected_level_name = selected_name
+			_editor_load_selected_level()
+		)
+		editor_list_box.add_child(button)
+
+
+func _sync_editor_fields_from_runtime() -> void:
+	editor_colors_enabled = [false, false, false, false, false]
+	var pool := active_color_pool if not active_color_pool.is_empty() else _all_color_indices()
+	for index in pool:
+		if index >= 0 and index < editor_colors_enabled.size():
+			editor_colors_enabled[index] = true
+	editor_target_color = clamp(goal_color, 0, COLORS.size() - 1)
+	editor_score_target = high_score
+	editor_goal_target = goal_target
+	editor_blocker_target = blocker_target
+	editor_move_limit = moves
+	if editor_selected_level_name.is_empty():
+		editor_selected_level_name = _current_level_name()
+
+
+func _editor_apply_brush(cell: Vector2i) -> void:
+	if not _in_board(cell):
+		return
+	match editor_brush:
+		EDITOR_BRUSH_DISABLED:
+			_set_terrain(cell, TERRAIN_DISABLED)
+			board[cell.y][cell.x] = {}
+		EDITOR_BRUSH_CRATE_1:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			board[cell.y][cell.x] = _make_blocker_tile(1)
+		EDITOR_BRUSH_CRATE_2:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			board[cell.y][cell.x] = _make_blocker_tile(2)
+		_:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			if board[cell.y][cell.x].is_empty() or int(board[cell.y][cell.x].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+				board[cell.y][cell.x] = _create_tile(cell.x, cell.y, false, false)
+	_update_tile_node(cell)
+	_refresh_editor_grid()
+	_update_hud()
+
+
+func _editor_begin_paint(cell: Vector2i) -> void:
+	editor_painting = true
+	editor_painted_cells.clear()
+	_editor_paint_cell_once(cell)
+
+
+func _editor_paint_hover(cell: Vector2i) -> void:
+	if not editor_painting:
+		return
+	_editor_paint_cell_once(cell)
+
+
+func _editor_end_paint() -> void:
+	editor_painting = false
+	editor_painted_cells.clear()
+
+
+func _editor_paint_cell_once(cell: Vector2i) -> void:
+	if editor_painted_cells.has(cell):
+		return
+	editor_painted_cells[cell] = true
+	_editor_apply_brush(cell)
+
+
+func _make_blocker_tile(hp: int) -> Dictionary:
+	return {
+		"color": _random_color_from_pool(),
+		"kind": TileKind.BLOCKER,
+		"hp": clamp(hp, 1, 2),
+		"id": Time.get_ticks_usec() + rng.randi()
+	}
+
+
+func _set_terrain(cell: Vector2i, value: int) -> void:
+	while terrain.size() < BOARD_ROWS:
+		var line: Array[int] = []
+		for col in BOARD_COLS:
+			line.append(TERRAIN_NORMAL)
+		terrain.append(line)
+	terrain[cell.y][cell.x] = value
+
+
+func _refresh_editor_grid() -> void:
+	if not is_instance_valid(editor_grid):
+		return
+	var buttons := editor_grid.get_children()
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var index := row * BOARD_COLS + col
+			if index >= buttons.size():
+				continue
+			var button := buttons[index] as Button
+			var cell := Vector2i(col, row)
+			var text := ""
+			var accent := Color("#ffd45d")
+			if not _terrain_allows_tile(cell):
+				text = "×"
+				accent = Color("#9a8f85")
+			elif not board[row][col].is_empty() and int(board[row][col].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+				text = "箱%d" % int(board[row][col].get("hp", 2))
+				accent = Color("#c17842")
+			else:
+				text = ""
+				accent = Color("#ffdc7d")
+			button.text = text
+			_style_button(button, accent)
+			button.add_theme_font_size_override("font_size", 13)
+
+
+func _editor_ensure_color_selection() -> void:
+	var any_enabled := false
+	for enabled in editor_colors_enabled:
+		if enabled:
+			any_enabled = true
+			break
+	if not any_enabled:
+		editor_colors_enabled[0] = true
+		if editor_color_checks.size() > 0 and is_instance_valid(editor_color_checks[0]):
+			editor_color_checks[0].button_pressed = true
+	_set_editor_status("颜色池已更新")
+
+
+func _editor_brush_name(brush: String) -> String:
+	match brush:
+		EDITOR_BRUSH_DISABLED:
+			return "禁用格"
+		EDITOR_BRUSH_CRATE_1:
+			return "木箱耐久1"
+		EDITOR_BRUSH_CRATE_2:
+			return "木箱耐久2"
+		_:
+			return "普通格"
+
+
+func _set_editor_status(text: String) -> void:
+	if is_instance_valid(editor_status_label):
+		editor_status_label.text = text
+
+
+func _editor_new_level() -> void:
+	editor_selected_level_path = ""
+	editor_selected_level_name = "新关卡"
+	_reset_default_terrain()
+	board.clear()
+	_clear_tiles()
+	active_color_pool = _editor_color_pool()
+	for row in BOARD_ROWS:
+		var line := []
+		var node_line: Array = []
+		for col in BOARD_COLS:
+			var tile := _create_tile(col, row, false, false)
+			line.append(tile)
+			var node := _make_tile_node(tile)
+			board_layer.add_child(node)
+			node.position = _tile_position(col, row)
+			node_line.append(node)
+		board.append(line)
+		tile_nodes.append(node_line)
+	_update_all_tile_nodes()
+	_refresh_editor_grid()
+	_set_editor_status("已新建关卡草稿")
+
+
+func _editor_create_level() -> void:
+	_editor_new_level()
+	editor_selected_level_path = _next_level_path()
+	editor_selected_level_name = "第%d关" % _level_index_for_path(editor_selected_level_path)
+	if is_instance_valid(editor_level_name_edit):
+		editor_level_name_edit.text = editor_selected_level_name
+	_editor_save_current_level()
+	_set_editor_status("已新增关卡")
+
+
+func _editor_load_selected_level() -> void:
+	if editor_selected_level_path.is_empty():
+		_set_editor_status("先在列表中选择关卡")
+		return
+	var config := _load_level_file(editor_selected_level_path)
+	if config.is_empty():
+		_set_editor_status("加载失败")
+		return
+	playtest_level_path = editor_selected_level_path
+	active_level_path = editor_selected_level_path
+	active_level_config = config
+	_clear_overlay()
+	_new_game()
+	_show_level_editor()
+	_set_editor_status("已加载：%s" % String(config.get("name", "未命名")))
+
+
+func _editor_delete_level() -> void:
+	if editor_selected_level_path.is_empty():
+		_set_editor_status("先选择要删除的关卡")
+		return
+	var delete_path := _normalize_res_path(editor_selected_level_path)
+	var absolute := ProjectSettings.globalize_path(delete_path)
+	if FileAccess.file_exists(delete_path):
+		var remove_error := DirAccess.remove_absolute(absolute)
+		if remove_error != OK:
+			_set_editor_status("删除失败：%s" % error_string(remove_error))
+			return
+	for i in range(editor_level_index.size() - 1, -1, -1):
+		if String(editor_level_index[i].get("path", "")) == delete_path:
+			editor_level_index.remove_at(i)
+	_reindex_editor_levels()
+	_save_level_index()
+	editor_selected_level_path = ""
+	editor_selected_level_name = ""
+	_refresh_editor_level_list()
+	_editor_new_level()
+	_set_editor_status("已删除关卡")
+
+
+func _editor_duplicate_level() -> void:
+	if editor_selected_level_path.is_empty():
+		_editor_save_current_level()
+	if editor_selected_level_path.is_empty():
+		return
+	_apply_editor_properties_to_runtime()
+	var config := _build_level_config_from_editor()
+	var new_path := _next_level_path()
+	var new_index := _level_index_for_path(new_path)
+	config["id"] = "level_%03d" % new_index
+	config["level_index"] = new_index
+	config["name"] = "%s 副本" % String(config.get("name", "关卡"))
+	editor_selected_level_path = new_path
+	editor_selected_level_name = String(config["name"])
+	if is_instance_valid(editor_level_name_edit):
+		editor_level_name_edit.text = editor_selected_level_name
+	var err := _save_level_file(new_path, config)
+	if err != OK:
+		_set_editor_status("复制失败：%s" % error_string(err))
+		return
+	_upsert_level_index(config, new_path)
+	_save_level_index()
+	_refresh_editor_level_list()
+	playtest_level_path = new_path
+	active_level_path = new_path
+	active_level_config = config
+	_set_editor_status("已复制为：%s" % new_path.get_file())
+
+
+func _editor_move_selected_level(direction: int) -> void:
+	if editor_selected_level_path.is_empty():
+		_set_editor_status("先选择关卡")
+		return
+	var current := _editor_index_position(editor_selected_level_path)
+	if current < 0:
+		return
+	var target: int = clamp(current + direction, 0, editor_level_index.size() - 1)
+	if target == current:
+		return
+	var entry: Dictionary = editor_level_index[current]
+	editor_level_index.remove_at(current)
+	editor_level_index.insert(target, entry)
+	_reindex_editor_levels()
+	_save_level_index()
+	_refresh_editor_level_list()
+	_set_editor_status("已调整关卡序号")
+
+
+func _editor_index_position(path: String) -> int:
+	var normalized := _normalize_res_path(path)
+	for i in editor_level_index.size():
+		if String(editor_level_index[i].get("path", "")) == normalized:
+			return i
+	return -1
+
+
+func _reindex_editor_levels() -> void:
+	for i in editor_level_index.size():
+		editor_level_index[i]["level_index"] = i + 1
+
+
+func _editor_save_current_level() -> void:
+	_apply_editor_properties_to_runtime()
+	var config := _build_level_config_from_editor()
+	var path := editor_selected_level_path
+	if path.is_empty():
+		path = _next_level_path()
+		editor_selected_level_path = path
+	var err := _save_level_file(path, config)
+	if err != OK:
+		_set_editor_status("保存失败：%s" % error_string(err))
+		return
+	_upsert_level_index(config, path)
+	_save_level_index()
+	_refresh_editor_level_list()
+	playtest_level_path = path
+	active_level_path = path
+	active_level_config = config
+	_set_editor_status("已保存：%s" % path.get_file())
+
+
+func _editor_playtest_current_level() -> void:
+	_editor_save_current_level()
+	if editor_selected_level_path.is_empty():
+		return
+	playtest_level_path = editor_selected_level_path
+	editor_open = false
+	_clear_overlay()
+	_new_game()
+
+
+func _apply_editor_properties_to_runtime() -> void:
+	active_color_pool = _editor_color_pool()
+	if active_color_pool.is_empty():
+		active_color_pool = [0]
+	var selected_id := editor_target_color_option.get_selected_id() if is_instance_valid(editor_target_color_option) else editor_target_color
+	goal_color = selected_id if active_color_pool.has(selected_id) else active_color_pool[0]
+	high_score = max(0, int(editor_score_spin.value))
+	goal_target = max(0, int(editor_goal_spin.value))
+	blocker_target = max(0, int(editor_blocker_spin.value))
+	moves = max(1, int(editor_moves_spin.value))
+	_update_hud()
+
+
+func _editor_color_pool() -> Array[int]:
+	var result: Array[int] = []
+	for i in editor_colors_enabled.size():
+		if editor_colors_enabled[i]:
+			result.append(i)
+	return result
+
+
+func _build_level_config_from_editor() -> Dictionary:
+	var disabled_cells: Array = []
+	var blockers := {}
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if not _terrain_allows_tile(cell):
+				disabled_cells.append([col, row])
+			elif not board[row][col].is_empty() and int(board[row][col].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+				blockers[_cell_key(cell)] = clamp(int(board[row][col].get("hp", 2)), 1, 2)
+	var level_name := editor_level_name_edit.text.strip_edges() if is_instance_valid(editor_level_name_edit) else editor_selected_level_name
+	if level_name.is_empty():
+		level_name = "未命名关卡"
+	editor_selected_level_name = level_name
+	return {
+		"id": _level_id_for_path(editor_selected_level_path),
+		"name": level_name,
+		"description": "内置编辑器生成",
+		"level_index": _level_index_for_path(editor_selected_level_path),
+		"board": {"cols": BOARD_COLS, "rows": BOARD_ROWS},
+		"colors": _editor_color_pool(),
+		"goal_color": goal_color,
+		"move_limit": moves,
+		"score_target": high_score,
+		"goal_target": goal_target,
+		"blocker_target": blocker_target,
+		"disabled_cells": disabled_cells,
+		"blockers": blockers
+	}
+
+
+func _current_level_name() -> String:
+	if not active_level_config.is_empty():
+		return String(active_level_config.get("name", "新关卡"))
+	return "第%d关草稿" % stage
+
+
+func _load_level_index() -> void:
+	editor_level_index.clear()
+	var data: Variant = _read_json_file(LEVEL_INDEX_PATH)
+	if data is Dictionary:
+		var levels: Array = data.get("levels", [])
+		for item in levels:
+			if item is Dictionary:
+				editor_level_index.append(item)
+	editor_level_index.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("level_index", 0)) < int(b.get("level_index", 0))
+	)
+
+
+func _save_level_index() -> Error:
+	var data: Dictionary = {"levels": editor_level_index}
+	return _write_json_file(LEVEL_INDEX_PATH, data)
+
+
+func _load_level_file(path: String) -> Dictionary:
+	var data: Variant = _read_json_file(_normalize_res_path(path))
+	return data if data is Dictionary else {}
+
+
+func _save_level_file(path: String, config: Dictionary) -> Error:
+	return _write_json_file(_normalize_res_path(path), config)
+
+
+func _read_json_file(path: String) -> Variant:
+	var normalized: String = _normalize_res_path(path)
+	var file: FileAccess = FileAccess.open(normalized, FileAccess.READ)
+	if file == null:
+		return null
+	var text: String = file.get_as_text()
+	var parsed: Variant = JSON.parse_string(text)
+	return parsed
+
+
+func _write_json_file(path: String, value: Variant) -> Error:
+	var normalized: String = _normalize_res_path(path)
+	var absolute: String = ProjectSettings.globalize_path(normalized)
+	var dir: String = absolute.get_base_dir()
+	var make_dir_error: Error = DirAccess.make_dir_recursive_absolute(dir)
+	if make_dir_error != OK:
+		return make_dir_error
+	var file := FileAccess.open(normalized, FileAccess.WRITE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_string(JSON.stringify(value, "\t"))
+	file.store_string("\n")
+	return OK
+
+
+func _normalize_res_path(path: String) -> String:
+	if path.begins_with("res://") or path.begins_with("user://") or path.begins_with("/"):
+		return path
+	return "res://%s" % path.trim_prefix("/")
+
+
+func _upsert_level_index(config: Dictionary, path: String) -> void:
+	var normalized := _normalize_res_path(path)
+	var entry := {
+		"id": String(config.get("id", _level_id_for_path(normalized))),
+		"name": String(config.get("name", "未命名关卡")),
+		"description": String(config.get("description", "")),
+		"level_index": int(config.get("level_index", _level_index_for_path(normalized))),
+		"path": normalized
+	}
+	for i in editor_level_index.size():
+		if String(editor_level_index[i].get("path", "")) == normalized:
+			editor_level_index[i] = entry
+			return
+	editor_level_index.append(entry)
+	editor_level_index.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("level_index", 0)) < int(b.get("level_index", 0))
+	)
+
+
+func _next_level_path() -> String:
+	var max_index := 0
+	for entry in editor_level_index:
+		max_index = max(max_index, int(entry.get("level_index", 0)))
+	var next_index := max_index + 1
+	return "%s/level_%03d.json" % [LEVEL_DIR_PATH, next_index]
+
+
+func _level_index_for_path(path: String) -> int:
+	if not path.is_empty():
+		for entry in editor_level_index:
+			if String(entry.get("path", "")) == path:
+				return int(entry.get("level_index", 1))
+		var basename := path.get_file().get_basename()
+		var number_text := basename.replace("level_", "")
+		if number_text.is_valid_int():
+			return int(number_text)
+	var max_index := 0
+	for entry in editor_level_index:
+		max_index = max(max_index, int(entry.get("level_index", 0)))
+	return max_index + 1
+
+
+func _level_id_for_path(path: String) -> String:
+	var index := _level_index_for_path(path)
+	return "level_%03d" % index
 
 
 func _make_overlay_button(text: String, pos: Vector2, callback: Callable) -> Button:
@@ -1214,10 +2158,10 @@ func _use_armed_powerup(cell: Vector2i) -> void:
 	_update_hud()
 
 
-func _create_tile(col: int, row: int, avoid_refill_cluster: bool = false) -> Dictionary:
+func _create_tile(col: int, row: int, avoid_refill_cluster: bool = false, allow_random_blocker: bool = true) -> Dictionary:
 	var kind := TileKind.NORMAL
 	var roll := rng.randf()
-	if roll < _stage_blocker_rate():
+	if allow_random_blocker and roll < _stage_blocker_rate():
 		kind = TileKind.BLOCKER
 	var color := _random_refill_color(col, row, kind) if avoid_refill_cluster else _random_safe_color(col, row, kind)
 	return {
@@ -1230,22 +2174,22 @@ func _create_tile(col: int, row: int, avoid_refill_cluster: bool = false) -> Dic
 
 func _random_safe_color(col: int, row: int, kind: int) -> int:
 	if kind == TileKind.BLOCKER:
-		return rng.randi_range(0, COLORS.size() - 1)
+		return _random_color_from_pool()
 	var candidates: Array[int] = []
-	for i in COLORS.size():
+	for i in active_color_pool:
 		candidates.append(i)
 	candidates.shuffle()
 	for color in candidates:
 		if not _would_make_opening_cluster(col, row, color):
 			return color
-	return rng.randi_range(0, COLORS.size() - 1)
+	return _random_color_from_pool()
 
 
 func _random_refill_color(col: int, row: int, kind: int) -> int:
 	if kind == TileKind.BLOCKER:
-		return rng.randi_range(0, COLORS.size() - 1)
+		return _random_color_from_pool()
 	var candidates: Array[int] = []
-	for i in COLORS.size():
+	for i in active_color_pool:
 		candidates.append(i)
 	candidates.shuffle()
 	for color in candidates:
@@ -1308,7 +2252,7 @@ func _make_tile_node(tile: Dictionary) -> Node2D:
 	root.set_meta("tile", tile)
 	var shadow := Sprite2D.new()
 	shadow.name = "Shadow"
-	shadow.texture = textures[tile.color]
+	shadow.texture = textures[int(tile.get("color", 0))]
 	shadow.position = Vector2(0, 4)
 	shadow.scale = Vector2(0.90, 0.84)
 	shadow.modulate = Color(0.28, 0.15, 0.12, 0.24)
@@ -1316,14 +2260,14 @@ func _make_tile_node(tile: Dictionary) -> Node2D:
 
 	var glow := Sprite2D.new()
 	glow.name = "Glow"
-	glow.texture = textures[tile.color]
+	glow.texture = textures[int(tile.get("color", 0))]
 	glow.scale = Vector2(1.08, 1.08)
 	glow.modulate = Color(1, 1, 1, 0.0)
 	root.add_child(glow)
 
 	var sprite := Sprite2D.new()
 	sprite.name = "Sprite"
-	sprite.texture = textures[tile.color]
+	sprite.texture = textures[int(tile.get("color", 0))]
 	sprite.scale = Vector2(0.88, 0.88)
 	root.add_child(sprite)
 
@@ -1362,6 +2306,10 @@ func _update_tile_node(cell: Vector2i) -> void:
 	var node: Node2D = _tile_node(cell)
 	var tile: Dictionary = _tile(cell)
 	node.set_meta("tile", tile)
+	if tile.is_empty():
+		node.visible = false
+		return
+	node.visible = true
 	var glow: Sprite2D = node.get_node("Glow")
 	glow.texture = textures[int(tile.color)]
 	glow.modulate = Color(1, 1, 1, 0.0)
@@ -1695,6 +2643,11 @@ func _apply_gravity() -> void:
 	for col in BOARD_COLS:
 		var write_row := BOARD_ROWS - 1
 		for row in range(BOARD_ROWS - 1, -1, -1):
+			var cell := Vector2i(col, row)
+			if not _terrain_allows_tile(cell):
+				write_row = row - 1
+				board[row][col] = {}
+				continue
 			if not board[row][col].is_empty():
 				if write_row != row:
 					board[write_row][col] = board[row][col]
@@ -1702,14 +2655,20 @@ func _apply_gravity() -> void:
 					board[row][col] = {}
 				write_row -= 1
 		for row in range(write_row, -1, -1):
-			board[row][col] = {}
+			if _terrain_allows_tile(Vector2i(col, row)):
+				board[row][col] = {}
 
 
 func _refill_board() -> void:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
+			if not _terrain_allows_tile(Vector2i(col, row)):
+				board[row][col] = {}
+				var blocked_node := _tile_node(Vector2i(col, row))
+				blocked_node.visible = false
+				continue
 			if board[row][col].is_empty():
-				board[row][col] = _create_tile(col, row, true)
+				board[row][col] = _create_tile(col, row, true, false)
 				var node := _tile_node(Vector2i(col, row))
 				node.position = _tile_position(col, -rng.randi_range(2, 7))
 				node.visible = true
@@ -1727,7 +2686,9 @@ func _animate_drop() -> void:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var node: Node2D = _tile_node(Vector2i(col, row))
-			node.visible = true
+			node.visible = not board[row][col].is_empty()
+			if board[row][col].is_empty():
+				continue
 			node.scale = Vector2.ONE
 			node.modulate.a = 1.0
 			_update_tile_node(Vector2i(col, row))
@@ -1739,7 +2700,16 @@ func _animate_drop() -> void:
 func _remix_board() -> void:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
-			board[row][col] = _create_tile(col, row)
+			var cell := Vector2i(col, row)
+			if not _terrain_allows_tile(cell):
+				board[row][col] = {}
+				_tile_node(cell).visible = false
+				continue
+			var previous: Dictionary = board[row][col] if row < board.size() and col < board[row].size() else {}
+			if not previous.is_empty() and int(previous.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+				board[row][col] = previous
+			else:
+				board[row][col] = _create_tile(col, row, false, false)
 			_tile_node(Vector2i(col, row)).position = _tile_position(col, row - BOARD_ROWS)
 			_update_tile_node(Vector2i(col, row))
 	_stabilize_opening_board()
@@ -1780,6 +2750,8 @@ func _apply_shift_preview(origin: Vector2i, axis: String, offset_amount: float) 
 	if axis == "row":
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, origin.y)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			var pos := _tile_position(col, origin.y)
 			pos.x += offset_amount
@@ -1790,6 +2762,8 @@ func _apply_shift_preview(origin: Vector2i, axis: String, offset_amount: float) 
 	else:
 		for row in BOARD_ROWS:
 			var cell := Vector2i(origin.x, row)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			var pos := _tile_position(origin.x, row)
 			pos.y += offset_amount
@@ -1819,6 +2793,8 @@ func _reset_shift_line(axis: String, index: int) -> void:
 			return
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, index)
+			if not _valid_cell(cell):
+				continue
 			var node: Node2D = _tile_node(cell)
 			node.position = _tile_position(col, index)
 			node.z_index = 0
@@ -1828,6 +2804,8 @@ func _reset_shift_line(axis: String, index: int) -> void:
 			return
 		for row in BOARD_ROWS:
 			var cell := Vector2i(index, row)
+			if not _valid_cell(cell):
+				continue
 			var node: Node2D = _tile_node(cell)
 			node.position = _tile_position(index, row)
 			node.z_index = 0
@@ -1837,11 +2815,15 @@ func _reset_shift_line(axis: String, index: int) -> void:
 func _highlight_shift_line(axis: String, index: int, color: Color) -> void:
 	if axis == "row":
 		for col in BOARD_COLS:
+			if not _valid_cell(Vector2i(col, index)):
+				continue
 			var node := _tile_node(Vector2i(col, index))
 			node.z_index = 2
 			_set_node_drag_glow(node, color)
 	else:
 		for row in BOARD_ROWS:
+			if not _valid_cell(Vector2i(index, row)):
+				continue
 			var node := _tile_node(Vector2i(index, row))
 			node.z_index = 2
 			_set_node_drag_glow(node, color)
@@ -1921,13 +2903,25 @@ func _update_shifted_line_nodes(origin: Vector2i, axis: String) -> void:
 func _capture_shift_preview_positions(origin: Vector2i, axis: String, steps: int) -> Dictionary:
 	var positions := {}
 	if axis == "row":
+		var cells: Array[Vector2i] = []
 		for col in BOARD_COLS:
-			var source_col := posmod(col - steps, BOARD_COLS)
-			positions[Vector2i(col, origin.y)] = _tile_node(Vector2i(source_col, origin.y)).position
+			var cell := Vector2i(col, origin.y)
+			if _valid_cell(cell):
+				cells.append(cell)
+		for i in cells.size():
+			var target := cells[i]
+			var source := cells[posmod(i - steps, cells.size())]
+			positions[target] = _tile_node(source).position
 	else:
+		var cells: Array[Vector2i] = []
 		for row in BOARD_ROWS:
-			var source_row := posmod(row - steps, BOARD_ROWS)
-			positions[Vector2i(origin.x, row)] = _tile_node(Vector2i(origin.x, source_row)).position
+			var cell := Vector2i(origin.x, row)
+			if _valid_cell(cell):
+				cells.append(cell)
+		for i in cells.size():
+			var target := cells[i]
+			var source := cells[posmod(i - steps, cells.size())]
+			positions[target] = _tile_node(source).position
 	return positions
 
 
@@ -1937,6 +2931,8 @@ func _animate_shift_snap(origin: Vector2i, axis: String, preview_positions: Dict
 	if axis == "row":
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, origin.y)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			node.visible = true
 			node.position = preview_positions.get(cell, _tile_position(col, origin.y))
@@ -1946,6 +2942,8 @@ func _animate_shift_snap(origin: Vector2i, axis: String, preview_positions: Dict
 	else:
 		for row in BOARD_ROWS:
 			var cell := Vector2i(origin.x, row)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			node.visible = true
 			node.position = preview_positions.get(cell, _tile_position(origin.x, row))
@@ -1962,6 +2960,8 @@ func _animate_shift_rebound(origin: Vector2i, axis: String, preview_positions: D
 	if axis == "row":
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, origin.y)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			node.visible = true
 			node.position = preview_positions.get(cell, _tile_position(col, origin.y))
@@ -1971,6 +2971,8 @@ func _animate_shift_rebound(origin: Vector2i, axis: String, preview_positions: D
 	else:
 		for row in BOARD_ROWS:
 			var cell := Vector2i(origin.x, row)
+			if not _valid_cell(cell):
+				continue
 			var node := _tile_node(cell)
 			node.visible = true
 			node.position = preview_positions.get(cell, _tile_position(origin.x, row))
@@ -1982,21 +2984,34 @@ func _animate_shift_rebound(origin: Vector2i, axis: String, preview_positions: D
 
 
 func _shift_row(row: int, steps: int) -> void:
-	var shifted := []
+	var cells: Array[Vector2i] = []
 	for col in BOARD_COLS:
-		var source_col := posmod(col - steps, BOARD_COLS)
-		shifted.append(board[row][source_col])
-	for col in BOARD_COLS:
-		board[row][col] = shifted[col]
+		var cell := Vector2i(col, row)
+		if _terrain_allows_tile(cell):
+			cells.append(cell)
+	_shift_cells(cells, steps)
 
 
 func _shift_col(col: int, steps: int) -> void:
+	var cells: Array[Vector2i] = []
+	for row in BOARD_ROWS:
+		var cell := Vector2i(col, row)
+		if _terrain_allows_tile(cell):
+			cells.append(cell)
+	_shift_cells(cells, steps)
+
+
+func _shift_cells(cells: Array[Vector2i], steps: int) -> void:
+	if cells.size() <= 1:
+		return
 	var shifted := []
-	for row in BOARD_ROWS:
-		var source_row := posmod(row - steps, BOARD_ROWS)
-		shifted.append(board[source_row][col])
-	for row in BOARD_ROWS:
-		board[row][col] = shifted[row]
+	for i in cells.size():
+		var source_index := posmod(i - steps, cells.size())
+		var source := cells[source_index]
+		shifted.append(board[source.y][source.x])
+	for i in cells.size():
+		var target := cells[i]
+		board[target.y][target.x] = shifted[i]
 
 
 func _resolve_matches_after_shift() -> void:
@@ -2094,7 +3109,7 @@ func _reroll_opening_cell(cell: Vector2i) -> void:
 		return
 	var old_color: int = int(_tile(cell).color)
 	var candidates: Array[int] = []
-	for color in COLORS.size():
+	for color in active_color_pool:
 		if color != old_color:
 			candidates.append(color)
 	candidates.shuffle()
@@ -2120,7 +3135,7 @@ func _seed_guaranteed_shift_match() -> void:
 	if BOARD_COLS < 3:
 		return
 	for row in range(BOARD_ROWS - 1, -1, -1):
-		for seed_color in COLORS.size():
+		for seed_color in active_color_pool:
 			_prepare_cluster_shift_match(row, seed_color, seed_color + 1)
 			if _find_matches().is_empty():
 				return
@@ -2331,11 +3346,11 @@ func _make_overlay_card(title: String, body: String, footer: String) -> Control:
 
 
 func _star_count() -> int:
-	if score >= high_score * 1.25 and _objectives_complete():
+	if _has_score_objective() and score >= high_score * 1.25 and _objectives_complete():
 		return 3
 	if _stage_complete():
 		return 2
-	if _objectives_complete() or score >= high_score:
+	if _objectives_complete() or _score_objective_complete():
 		return 1
 	return 0
 
@@ -2382,19 +3397,25 @@ func _special_reward_name(kind: int) -> String:
 
 
 func _failure_tip() -> String:
-	if blocker_target > 0 and blocker_cleared < blocker_target:
+	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return "提示：在木箱旁做消除最快"
-	if goal_collected < goal_target and paint_charges <= 0:
+	if _has_goal_objective() and goal_collected < goal_target and paint_charges <= 0:
 		return "提示：染色适合留给目标色"
-	if score < high_score:
+	if _has_score_objective() and score < high_score:
 		return "提示：大连消分数更高"
 	return "提示：木箱会被相邻消除震裂"
 
 
 func _result_body(result_line: String) -> String:
-	if blocker_target > 0:
-		return "目标 %d/%d  木箱 %d/%d\n分数 %d/%d\n%s" % [goal_collected, goal_target, blocker_cleared, blocker_target, score, high_score, result_line]
-	return "目标 %d/%d\n分数 %d/%d\n%s" % [goal_collected, goal_target, score, high_score, result_line]
+	var lines: Array[String] = []
+	if _has_goal_objective():
+		lines.append("%s毛球 %d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target])
+	if _has_blocker_objective():
+		lines.append("木箱 %d/%d" % [blocker_cleared, blocker_target])
+	if _has_score_objective():
+		lines.append("分数 %d/%d" % [score, high_score])
+	lines.append(result_line)
+	return "\n".join(lines)
 
 
 func _current_objective_nudge() -> String:
@@ -2406,25 +3427,59 @@ func _current_objective_nudge() -> String:
 		return "关卡目标已完成，收下这一局！"
 	if moves <= 5 and not _stage_complete():
 		return "最后几步，优先做目标色连消。"
-	if blocker_target > 0 and blocker_cleared < blocker_target:
+	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return "在木箱旁消除，完成木箱目标。"
-	if goal_collected >= goal_target:
+	if _has_goal_objective() and goal_collected >= goal_target:
 		return "目标色已达成，做大连消冲分。"
-	if score >= high_score:
+	if _has_score_objective() and score >= high_score:
 		return "分数已达成，继续收集目标色。"
 	return _stage_mission_line()
 
 
 func _stage_complete() -> bool:
-	return score >= high_score and _objectives_complete()
+	return _score_objective_complete() and _objectives_complete()
 
 
 func _objectives_complete() -> bool:
-	if goal_collected < goal_target:
+	if _has_goal_objective() and goal_collected < goal_target:
 		return false
-	if blocker_target > 0 and blocker_cleared < blocker_target:
+	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return false
 	return true
+
+
+func _has_score_objective() -> bool:
+	return high_score > 0
+
+
+func _has_goal_objective() -> bool:
+	return goal_target > 0
+
+
+func _has_blocker_objective() -> bool:
+	return blocker_target > 0
+
+
+func _score_objective_complete() -> bool:
+	return not _has_score_objective() or score >= high_score
+
+
+func _active_objective_names() -> Array[String]:
+	var names: Array[String] = []
+	if _has_goal_objective():
+		names.append("%s毛球" % COLOR_NAMES[goal_color])
+	if _has_blocker_objective():
+		names.append("木箱")
+	if _has_score_objective():
+		names.append("分数")
+	return names
+
+
+func _active_objective_summary() -> String:
+	var names := _active_objective_names()
+	if names.is_empty():
+		return "自由试玩"
+	return "、".join(names)
 
 
 func _stage_blocker_target() -> int:
@@ -2434,19 +3489,34 @@ func _stage_blocker_target() -> int:
 
 
 func _stage_brief_line() -> String:
-	var text := "收集 %d 个目标毛球  分数 %d" % [goal_target, high_score]
-	if blocker_target > 0:
-		text += "\n清除 %d 个木箱" % blocker_target
-	return text
+	if not active_level_config.is_empty():
+		var lines: Array[String] = []
+		if _has_goal_objective():
+			lines.append("收集 %d 个%s毛球" % [goal_target, COLOR_NAMES[goal_color]])
+		if _has_blocker_objective():
+			lines.append("清除 %d 个木箱" % blocker_target)
+		if _has_score_objective():
+			lines.append("分数 %d" % high_score)
+		return "\n".join(lines) if not lines.is_empty() else "自由试玩关卡"
+	var text := ""
+	if _has_goal_objective():
+		text = "收集 %d 个目标毛球" % goal_target
+	if _has_score_objective():
+		text += "  分数 %d" % high_score if not text.is_empty() else "分数 %d" % high_score
+	if _has_blocker_objective():
+			text += "\n清除 %d 个木箱" % blocker_target
+	return text if not text.is_empty() else "自由试玩关卡"
 
 
 func _pause_goal_line() -> String:
-	if blocker_target > 0:
-		return "目标：毛球、木箱、分数"
-	return "目标：毛球和分数"
+	if not active_level_config.is_empty():
+		return "%s：%s" % [String(active_level_config.get("name", "自定义关卡")), _active_objective_summary()]
+	return "目标：%s" % _active_objective_summary()
 
 
 func _stage_rule_line() -> String:
+	if not active_level_config.is_empty():
+		return "自定义关卡：颜色池 %d 色，步数 %d" % [active_color_pool.size(), moves]
 	var blocker_rate := _stage_blocker_rate()
 	if blocker_rate <= 0.0:
 		return "拖动整行整列，连出3个以上同色毛球"
@@ -2456,11 +3526,19 @@ func _stage_rule_line() -> String:
 
 
 func _stage_mission_line() -> String:
-	if blocker_target > 0:
+	if not active_level_config.is_empty():
+		return "%s。" % _stage_brief_line().replace("\n", "，")
+	if _has_goal_objective() and _has_blocker_objective():
 		return "收集 %d 个目标毛球，清除 %d 个木箱。" % [goal_target, blocker_target]
+	if _has_goal_objective():
+		return "拖动整行整列，连出3个以上目标毛球。"
+	if _has_blocker_objective():
+		return "在木箱旁消除，清除木箱。"
+	if _has_score_objective():
+		return "做大连消冲到目标分数。"
 	if stage >= 2:
 		return "拖动整行整列，在木箱旁消除来震裂它。"
-	return "拖动整行整列，连出3个以上目标毛球。"
+	return "自由试玩，尝试做出大连消。"
 
 
 func _stage_blocker_rate() -> float:
@@ -2471,11 +3549,11 @@ func _stage_blocker_rate() -> float:
 
 func _failure_reason() -> String:
 	var missing: Array[String] = []
-	if goal_collected < goal_target:
+	if _has_goal_objective() and goal_collected < goal_target:
 		missing.append("还差%d个目标" % (goal_target - goal_collected))
-	if blocker_target > 0 and blocker_cleared < blocker_target:
+	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		missing.append("还差%d个木箱" % (blocker_target - blocker_cleared))
-	if score < high_score:
+	if _has_score_objective() and score < high_score:
 		missing.append("还差%d分" % (high_score - score))
 	if missing.is_empty():
 		return "再来一次消除就能过关"
@@ -2483,27 +3561,52 @@ func _failure_reason() -> String:
 
 
 func _hud_goal_text() -> String:
-	if blocker_target > 0:
-		return "目标\n%d/%d  箱 %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
-	return "目标\n%d/%d" % [goal_collected, goal_target]
+	if _has_goal_objective() and _has_blocker_objective():
+		return "%s\n%d/%d  箱 %d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target, blocker_cleared, blocker_target]
+	if _has_goal_objective():
+		return "%s\n%d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target]
+	if _has_blocker_objective():
+		return "木箱\n%d/%d" % [blocker_cleared, blocker_target]
+	if _has_score_objective():
+		return "分数\n%d/%d" % [score, high_score]
+	return "目标\n自由"
 
 
 func _objective_progress_value() -> int:
-	return goal_collected + blocker_cleared
+	var total := 0
+	if _has_goal_objective():
+		total += goal_collected
+	if _has_blocker_objective():
+		total += blocker_cleared
+	if _has_score_objective():
+		total += min(score, high_score)
+	return total
 
 
 func _objective_progress_target() -> int:
-	return goal_target + blocker_target
+	var total := 0
+	if _has_goal_objective():
+		total += goal_target
+	if _has_blocker_objective():
+		total += blocker_target
+	if _has_score_objective():
+		total += high_score
+	return max(1, total)
 
 
 func _objective_progress_text() -> String:
-	if blocker_target > 0:
-		return "%d/%d + 木箱 %d/%d" % [goal_collected, goal_target, blocker_cleared, blocker_target]
-	return "%d/%d" % [goal_collected, goal_target]
+	var parts: Array[String] = []
+	if _has_goal_objective():
+		parts.append("%s %d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target])
+	if _has_blocker_objective():
+		parts.append("木箱 %d/%d" % [blocker_cleared, blocker_target])
+	if _has_score_objective():
+		parts.append("分数 %d/%d" % [score, high_score])
+	return " + ".join(parts) if not parts.is_empty() else "自由试玩"
 
 
 func _update_hud() -> void:
-	score_label.text = "%d/%d" % [score, high_score]
+	score_label.text = "%d/%d" % [score, high_score] if _has_score_objective() else "%d" % score
 	var score_percent: float = clamp(float(score) / max(1.0, float(high_score)), 0.0, 1.0)
 	moves_label.text = "步数\n%02d" % moves
 	goal_label.text = _hud_goal_text()
@@ -2511,10 +3614,11 @@ func _update_hud() -> void:
 	level_label.text = "第%d关" % stage
 	if is_instance_valid(best_label):
 		best_label.text = "最佳 %d" % best_score
-	target_bar.value = min(score, high_score)
+	target_bar.max_value = max(1, high_score)
+	target_bar.value = min(score, max(1, high_score))
 	if is_instance_valid(score_progress_label):
-		score_progress_label.text = "%d%%" % int(round(score_percent * 100.0))
-		score_progress_label.add_theme_color_override("font_color", Color("#2e91b8") if score >= high_score else Color("#7a4a45"))
+		score_progress_label.text = "%d%%" % int(round(score_percent * 100.0)) if _has_score_objective() else "自由"
+		score_progress_label.add_theme_color_override("font_color", Color("#2e91b8") if _score_objective_complete() else Color("#7a4a45"))
 	if is_instance_valid(goal_bar):
 		goal_bar.max_value = _objective_progress_target()
 		goal_bar.tint_progress = COLORS[goal_color]
@@ -2644,6 +3748,8 @@ func _pulse_fever_console() -> void:
 func _maybe_goal_assist() -> void:
 	if assist_given:
 		return
+	if not _has_goal_objective():
+		return
 	if moves > 12:
 		return
 	var progress: float = float(goal_collected) / max(1.0, float(goal_target))
@@ -2657,17 +3763,17 @@ func _maybe_goal_assist() -> void:
 
 
 func _check_milestones(score_before: int, goal_before: int, blocker_before: int, fever_before: float) -> void:
-	if not goal_milestone_shown and goal_before < goal_target and goal_collected >= goal_target:
+	if _has_goal_objective() and not goal_milestone_shown and goal_before < goal_target and goal_collected >= goal_target:
 		goal_milestone_shown = true
 		_spawn_milestone_text(Vector2(224, 652), "目标达成", Color("#2e91b8"), 30)
 		_flash_status("目标达成！现在冲分。")
 		_board_bump()
-	if blocker_target > 0 and not blocker_milestone_shown and blocker_before < blocker_target and blocker_cleared >= blocker_target:
+	if _has_blocker_objective() and not blocker_milestone_shown and blocker_before < blocker_target and blocker_cleared >= blocker_target:
 		blocker_milestone_shown = true
 		_spawn_milestone_text(Vector2(224, 652), "木箱清除", Color("#ff7f91"), 28)
 		_flash_status("木箱目标完成！")
 		_board_bump()
-	if not score_milestone_shown and score_before < high_score and score >= high_score:
+	if _has_score_objective() and not score_milestone_shown and score_before < high_score and score >= high_score:
 		score_milestone_shown = true
 		_spawn_milestone_text(Vector2(224, 120), "分数达标", Color("#f47a5b"), 28)
 		_flash_status("分数达标！继续收集目标色。")
@@ -3008,8 +4114,11 @@ func _draw_backdrop(backdrop: Control) -> void:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var cell_rect := Rect2(inner_board.position + Vector2(col * (TILE_SIZE + TILE_GAP), row * (TILE_SIZE + TILE_GAP)), Vector2(TILE_SIZE, TILE_SIZE))
-			var cell_color := Color("#ffdca8") if (row + col) % 2 == 0 else Color("#ffe7bf")
-			_draw_round_box(backdrop, cell_rect, cell_color, Color(1, 1, 1, 0.24), 4, 1)
+			if not _terrain_allows_tile(Vector2i(col, row)):
+				_draw_round_box(backdrop, cell_rect, Color(0.40, 0.25, 0.20, 0.34), Color(0.18, 0.10, 0.08, 0.24), 4, 1)
+			else:
+				var cell_color := Color("#ffdca8") if (row + col) % 2 == 0 else Color("#ffe7bf")
+				_draw_round_box(backdrop, cell_rect, cell_color, Color(1, 1, 1, 0.24), 4, 1)
 	_draw_soft_panel(backdrop, Rect2(Vector2(18, 704), Vector2(412, 198)), Color("#fff7df"), Color("#e9a35d"))
 	backdrop.draw_line(Vector2(46, 728), Vector2(402, 728), Color("#f0c08b"), 2.0)
 	_draw_meter(backdrop, Rect2(Vector2(84, 756), Vector2(328, 16)), float(_objective_progress_value()) / max(1.0, float(_objective_progress_target())), COLORS[goal_color])
