@@ -74,15 +74,18 @@ jobs:
           touch _site/.nojekyll
 
       - name: Setup Pages
+        if: ${{ github.event.repository.private == false }}
         uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
+        if: ${{ github.event.repository.private == false }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
   deploy:
     needs: export
+    if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
