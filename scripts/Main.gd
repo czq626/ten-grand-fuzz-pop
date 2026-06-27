@@ -14,6 +14,7 @@ const LEVEL_INDEX_PATH := "res://data/levels/index.json"
 const LEVEL_DIR_PATH := "res://data/levels"
 const USER_LEVEL_INDEX_PATH := "user://levels/index.json"
 const USER_LEVEL_DIR_PATH := "user://levels"
+const LEVEL_EXPORT_DIR_PATH := "user://exports"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
 const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
 const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
@@ -356,6 +357,40 @@ func _maybe_run_level_persistence_test() -> void:
 	var loaded := _load_level_file(path)
 	if not found or String(loaded.get("name", "")) != "持久化测试":
 		push_error("Level persistence test failed: saved user level was not reloaded")
+		get_tree().quit(1)
+		return
+	var pack := _build_level_pack(false)
+	var pack_levels: Array = pack.get("levels", [])
+	var pack_found := false
+	for item in pack_levels:
+		if item is Dictionary and String((item as Dictionary).get("id", "")) == "level_persist_test":
+			pack_found = true
+			break
+	if String(pack.get("type", "")) != "level_pack" or not pack_found:
+		push_error("Level persistence test failed: level pack export missing saved level")
+		get_tree().quit(1)
+		return
+	var export_path := "%s/test-level-pack.json" % LEVEL_EXPORT_DIR_PATH
+	_save_or_download_export("test-level-pack.json", JSON.stringify(pack, "\t"))
+	if not FileAccess.file_exists(export_path):
+		push_error("Level persistence test failed: desktop export file was not written")
+		get_tree().quit(1)
+		return
+	var pack_import_level := imported_level.duplicate(true)
+	pack_import_level["id"] = "level_pack_import_test"
+	pack_import_level["name"] = "关卡包导入测试"
+	var import_pack := {
+		"format_version": 1,
+		"game": "Ten Grand Fuzz Pop",
+		"type": "level_pack",
+		"levels": [pack_import_level]
+	}
+	_editor_import_level_pack(import_pack)
+	_load_level_index()
+	var import_path := "%s/level_pack_import_test.json" % USER_LEVEL_DIR_PATH
+	var imported_loaded := _load_level_file(import_path)
+	if String(imported_loaded.get("name", "")) != "关卡包导入测试":
+		push_error("Level persistence test failed: level pack import was not persisted")
 		get_tree().quit(1)
 		return
 	print("Level persistence test passed: %s" % path)
@@ -1611,19 +1646,19 @@ func _build_editor_grid(panel: Control) -> void:
 
 func _build_editor_actions(panel: Control) -> void:
 	var new_button := _make_editor_action_button("新增", Vector2(18, 826), _editor_create_level)
-	var copy_button := _make_editor_action_button("复制", Vector2(98, 826), _editor_duplicate_level)
-	var delete_button := _make_editor_action_button("删除", Vector2(178, 826), _editor_delete_level)
-	var save_button := _make_editor_action_button("保存", Vector2(258, 826), _editor_save_current_level)
-	var import_button := _make_editor_action_button("导入", Vector2(338, 826), _editor_show_import_dialog)
-	var export_button := _make_editor_action_button("导出", Vector2(18, 862), _editor_export_current_level)
-	var up_button := _make_editor_action_button("上移", Vector2(98, 862), func() -> void:
+	var copy_button := _make_editor_action_button("复制", Vector2(84, 826), _editor_duplicate_level)
+	var delete_button := _make_editor_action_button("删除", Vector2(150, 826), _editor_delete_level)
+	var save_button := _make_editor_action_button("保存", Vector2(216, 826), _editor_save_current_level)
+	var import_button := _make_editor_action_button("导入", Vector2(282, 826), _editor_show_import_dialog)
+	var export_button := _make_editor_action_button("导出", Vector2(348, 826), _editor_export_level_pack)
+	var up_button := _make_editor_action_button("上移", Vector2(18, 862), func() -> void:
 		_editor_move_selected_level(-1)
 	)
-	var down_button := _make_editor_action_button("下移", Vector2(178, 862), func() -> void:
+	var down_button := _make_editor_action_button("下移", Vector2(84, 862), func() -> void:
 		_editor_move_selected_level(1)
 	)
-	var play_button := _make_editor_action_button("试玩", Vector2(258, 862), _editor_playtest_current_level)
-	var close_button := _make_editor_action_button("关闭", Vector2(338, 862), func() -> void:
+	var play_button := _make_editor_action_button("试玩", Vector2(150, 862), _editor_playtest_current_level)
+	var close_button := _make_editor_action_button("关闭", Vector2(216, 862), func() -> void:
 		editor_open = false
 		_clear_overlay()
 		busy = false
@@ -1642,7 +1677,7 @@ func _build_editor_actions(panel: Control) -> void:
 
 func _make_editor_action_button(text: String, pos: Vector2, callback: Callable) -> Button:
 	var button := _make_overlay_button(text, pos, callback)
-	button.size = Vector2(72, 28)
+	button.size = Vector2(62, 28)
 	button.add_theme_font_size_override("font_size", 13)
 	return button
 
@@ -2005,19 +2040,18 @@ func _editor_playtest_current_level() -> void:
 	_new_game()
 
 
-func _editor_export_current_level() -> void:
-	_apply_editor_properties_to_runtime()
-	var config := _build_level_config_from_editor()
-	var json_text := JSON.stringify(config, "\t")
-	var filename := "%s.json" % String(config.get("id", "level_export"))
-	if OS.has_feature("web") and _download_text_file(filename, json_text):
-		_set_editor_status("已导出下载：%s" % filename)
-		return
-	_show_level_json_panel("导出关卡", "复制下面的 JSON，可备份或导入到其他浏览器。", json_text, false)
+func _editor_export_level_pack() -> void:
+	_editor_save_current_level()
+	_load_level_index()
+	var pack := _build_level_pack(false)
+	var json_text := JSON.stringify(pack, "\t")
+	var filename := "ten-grand-fuzz-pop-level-pack.json"
+	_save_or_download_export(filename, json_text)
+	_show_level_json_panel("导出全部关卡", "这是当前关卡列表的完整 JSON。网页会下载；也可以复制保存。", json_text, false)
 
 
 func _editor_show_import_dialog() -> void:
-	_show_level_json_panel("导入关卡", "粘贴关卡 JSON 后点击导入，会保存到本机浏览器。", "", true)
+	_show_level_json_panel("导入全部关卡", "粘贴“导出全部关卡”得到的 JSON 后点击导入。", "", true)
 
 
 func _show_level_json_panel(title: String, help_text: String, json_text: String, import_mode: bool) -> void:
@@ -2061,15 +2095,14 @@ func _show_level_json_panel(title: String, help_text: String, json_text: String,
 		)
 		panel.add_child(import_button)
 	else:
-		var save_button := _make_overlay_button("下载", Vector2(98, 490), func() -> void:
+		var save_button := _make_overlay_button("保存", Vector2(98, 490), func() -> void:
 			var parsed: Variant = JSON.parse_string(edit.text)
-			var export_id := "level_export"
+			var export_id := "ten-grand-fuzz-pop-level-pack"
 			if parsed is Dictionary:
-				export_id = String((parsed as Dictionary).get("id", export_id))
-			if _download_text_file("%s.json" % export_id, edit.text):
-				_set_editor_status("已触发下载")
-			else:
-				_set_editor_status("当前平台请手动复制 JSON")
+				var parsed_dict := parsed as Dictionary
+				if String(parsed_dict.get("type", "")) == "level_pack":
+					export_id = "ten-grand-fuzz-pop-level-pack"
+			_save_or_download_export("%s.json" % export_id, edit.text)
 		)
 		panel.add_child(save_button)
 
@@ -2085,25 +2118,92 @@ func _editor_import_level_json(json_text: String) -> void:
 	if not parsed is Dictionary:
 		_set_editor_status("导入失败：JSON 格式不正确")
 		return
-	var config := (parsed as Dictionary).duplicate(true)
-	var path := _user_level_path_for_config(config)
-	config["id"] = _level_id_for_path(path)
-	config["level_index"] = _level_index_for_path(path)
-	var err := _save_level_file(path, config)
-	if err != OK:
-		_set_editor_status("导入失败：%s" % error_string(err))
+	var parsed_dict := parsed as Dictionary
+	if String(parsed_dict.get("type", "")) != "level_pack":
+		_set_editor_status("导入失败：请粘贴完整关卡包 JSON")
 		return
-	_upsert_level_index(config, path)
+	_editor_import_level_pack(parsed_dict)
+
+
+func _editor_import_level_pack(pack: Dictionary) -> void:
+	var levels: Array = pack.get("levels", [])
+	if levels.is_empty():
+		_set_editor_status("导入失败：关卡包为空")
+		return
+	_load_level_index()
+	var imported_count := 0
+	for item in levels:
+		if not item is Dictionary:
+			continue
+		var config := (item as Dictionary).duplicate(true)
+		var path := _user_level_path_for_config(config)
+		config["id"] = _level_id_for_path(path)
+		config["level_index"] = int(config.get("level_index", _level_index_for_path(path)))
+		var err := _save_level_file(path, config)
+		if err != OK:
+			_set_editor_status("导入失败：%s" % error_string(err))
+			return
+		_upsert_level_index(config, path)
+		imported_count += 1
 	_save_level_index()
-	editor_selected_level_path = path
-	editor_selected_level_name = String(config.get("name", "导入关卡"))
-	playtest_level_path = path
-	active_level_path = path
-	active_level_config = config
+	_load_level_index()
+	_refresh_editor_level_list()
+	if imported_count > 0:
+		for entry in editor_level_index:
+			if bool(entry.get("user", false)):
+				editor_selected_level_path = String(entry.get("path", ""))
+				editor_selected_level_name = String(entry.get("name", "导入关卡"))
+				break
+		if not editor_selected_level_path.is_empty():
+			active_level_path = editor_selected_level_path
+			active_level_config = _load_level_file(editor_selected_level_path)
+			playtest_level_path = editor_selected_level_path
 	_clear_overlay()
 	_new_game()
 	_show_level_editor()
-	_set_editor_status("已导入：%s" % editor_selected_level_name)
+	_set_editor_status("已导入关卡包：%d关" % imported_count)
+
+
+func _build_level_pack(user_only: bool = false) -> Dictionary:
+	var levels: Array = []
+	for entry in editor_level_index:
+		if user_only and not bool(entry.get("user", false)):
+			continue
+		var path := String(entry.get("path", ""))
+		var config := _load_level_file(path)
+		if config.is_empty():
+			continue
+		var export_level := _normalize_export_level(config)
+		export_level["id"] = String(entry.get("id", export_level.get("id", _level_id_for_path(path))))
+		export_level["level_index"] = int(entry.get("level_index", export_level.get("level_index", _level_index_for_path(path))))
+		export_level["name"] = String(entry.get("name", export_level.get("name", "未命名关卡")))
+		levels.append(export_level)
+	return {
+		"format_version": 1,
+		"game": "Ten Grand Fuzz Pop",
+		"type": "level_pack",
+		"exported_at_unix": Time.get_unix_time_from_system(),
+		"levels": levels
+	}
+
+
+func _normalize_export_level(config: Dictionary) -> Dictionary:
+	var export_level := config.duplicate(true)
+	export_level.erase("path")
+	export_level.erase("user")
+	return export_level
+
+
+func _save_or_download_export(filename: String, text: String) -> void:
+	if OS.has_feature("web") and _download_text_file(filename, text):
+		_set_editor_status("已导出下载：%s" % filename)
+		return
+	var export_path := "%s/%s" % [LEVEL_EXPORT_DIR_PATH, filename]
+	var err := _write_text_file(export_path, text)
+	if err == OK:
+		_set_editor_status("已导出：%s" % ProjectSettings.globalize_path(export_path))
+	else:
+		_set_editor_status("导出失败：%s" % error_string(err))
 
 
 func _download_text_file(filename: String, text: String) -> bool:
@@ -2251,6 +2351,10 @@ func _read_json_file(path: String) -> Variant:
 
 
 func _write_json_file(path: String, value: Variant) -> Error:
+	return _write_text_file(path, "%s\n" % JSON.stringify(value, "\t"))
+
+
+func _write_text_file(path: String, text: String) -> Error:
 	var normalized: String = _normalize_res_path(path)
 	var absolute: String = ProjectSettings.globalize_path(normalized)
 	var dir: String = absolute.get_base_dir()
@@ -2260,8 +2364,7 @@ func _write_json_file(path: String, value: Variant) -> Error:
 	var file := FileAccess.open(normalized, FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
-	file.store_string(JSON.stringify(value, "\t"))
-	file.store_string("\n")
+	file.store_string(text)
 	return OK
 
 

@@ -175,7 +175,10 @@ The following commands passed after this change:
 - Added `assets/fonts/NotoSansCJKsc-Regular.otf` and set it as the runtime UI theme default font so Chinese labels render correctly in browser builds.
 - Changed the level editor to merge built-in `res://data/levels` entries with local `user://levels` entries.
 - New or edited levels are saved under `user://levels/` so Web builds can restore them from browser-local persistence after refresh.
-- Added editor import/export actions for copying or downloading level JSON as a backup and sharing path.
+- Simplified editor import/export to full-list JSON only.
+- `导出` writes a `level_pack` JSON containing the current merged level list.
+- `导入` accepts that full `level_pack` JSON.
+- Web export downloads JSON through the browser when possible and always shows copyable JSON; desktop Godot also writes JSON under `user://exports/`.
 
 ### Verification
 
@@ -184,6 +187,8 @@ The following commands passed after this change:
   - `/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --screenshot=/tmp/codex-font-check.png`
 - Local persistence check passed:
   - `/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test`
+- Editor layout screenshot passed after simplifying to full-list import/export buttons:
+  - `/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level-editor --screenshot=/tmp/codex-editor-export-simple.png`
 - In the restricted Codex sandbox, GUI Godot invocations exited before producing logs; the same logic was verified with headless commands and should be rechecked visually in a normal desktop/browser run.
 
 Additional screenshot checks were run for:

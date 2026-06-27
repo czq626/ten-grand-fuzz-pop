@@ -80,11 +80,13 @@ The first editor version supports:
 - A selectable color pool, so a level can choose exactly which fuzzy colors can spawn.
 - Random fuzzy generation from the selected color pool.
 - Goal configuration for move limit, score target, target color, target fuzzy count, and crate-clear count.
-- Save, load, new level, import/export, and playtest actions.
+- Save, load, new level, full level-list export/import, and playtest actions.
 
 Normal stage progression is still preserved. JSON levels are currently used through the editor/playtest path or the `--level=res://data/levels/level_001.json` launch argument. This is the transitional route before fully replacing stage logic with authored JSON levels.
 
-On GitHub Pages and other Web exports, `res://` is bundled into the game package and is read-only. The editor saves browser-local changes into `user://levels/`, which Godot stores through browser local persistence. Refreshing the same browser should keep those levels, but clearing site data, using private browsing, or switching devices can lose them. Use editor export/import to back up or share a level JSON file.
+On GitHub Pages and other Web exports, `res://` is bundled into the game package and is read-only. The editor saves browser-local changes into `user://levels/`, which Godot stores through browser local persistence. Refreshing the same browser should keep those levels, but clearing site data, using private browsing, or switching devices can lose them.
+
+Use `导出` to export one JSON file containing the current merged level list. Web builds download the file through the browser when possible; otherwise the export panel shows copyable JSON. Desktop Godot also writes the file to `user://exports/`. Use `导入` to paste that full level-list JSON back into the editor.
 
 ## How is the web build deployed?
 
