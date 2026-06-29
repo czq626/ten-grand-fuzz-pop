@@ -3,6 +3,128 @@
 This document records UI, art, and presentation changes for `Ten Grand Fuzz Pop`.
 Update it whenever visual, layout, asset, or player-facing copy changes are made.
 
+## 2026-06-29 - Booster Obstacle Damage Rules
+
+### Goal
+
+- Ensure all board boosters respect layered obstacle durability instead of clearing multi-layer obstacles outright.
+
+### Implemented
+
+- Board booster effects no longer force-clear ordinary hit targets.
+- Wood crates now lose only 1 hp per booster hit, including arrow, bomb, and rainbow effects.
+- Chains and ice still lose only their overlay layer when hit by any board booster.
+- Rainbow target selection now traverses different targets first; repeated hits on the same target happen only after the available target list has been used once.
+- Smoke coverage now checks that arrow, bomb, and rainbow hits reduce a 3-hp crate to 2 hp, and that a rainbow with nine different crate targets hits each once instead of double-hitting one target.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+```
+
+## 2026-06-29 - Readable Chain Overlay and Obstacle Hit Feedback
+
+### Goal
+
+- Make lock chains readable without hiding the fuzzy color needed for matching.
+- Add distinct audio and visual feedback when obstacles are hit.
+
+### Implemented
+
+- Replaced the lock-chain runtime overlay with `assets/art/special/obstacle_chain_readable.png`.
+- The new lock-chain art uses only two diagonal crossing chains plus a small edge lock, leaving most of the fuzzy color visible.
+- Obstacle hits now play specific generated sounds: wood crack for crates, high glassy crack for ice, and metallic ring for chains.
+- Ice and chain removal now spawn colored shard particles.
+- Crate damage and crate clearing now both play the crate break sound and wood splinter particles.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level=/tmp/codex-obstacle-visual-level.json --screenshot=/tmp/codex-chain-readable-check-3.png
+```
+
+## 2026-06-28 - Obstacle Art Scale and Three-Level Crates
+
+### Goal
+
+- Improve the readability and physicality of ice, lock chains, and wood crates.
+- Add a third crate durability level and make crate levels visually distinct.
+
+### Implemented
+
+- Ice overlays are now larger than the fuzzy and read as a translucent shell wrapping around the fuzzy.
+- Lock-chain overlays are now oversized cross straps with link shapes and a lock, reading as tied around the fuzzy.
+- Added 3-level crate support. Level 3 is reinforced with metal bands and corner plates, level 2 is an intact crossed-plank crate, and level 1 is a cracked/damaged crate.
+- Wood crates are no longer randomly generated. They appear only from level JSON or editor placement.
+- Crate damage now reduces exactly 1 durability level per adjacent match or booster hit, and crate objectives count only when the final layer clears.
+- The level editor now exposes `木箱1`, `木箱2`, and `木箱3` brushes; level JSON `blockers` values support 1, 2, and 3.
+- Runtime crate assets were added at `assets/art/blocker_crate_level1.png`, `assets/art/blocker_crate_level2.png`, and `assets/art/blocker_crate_level3.png`.
+- Existing ice/chain runtime overlays at `assets/art/special/obstacle_ice.png` and `assets/art/special/obstacle_chain.png` were replaced with larger transparent versions.
+- AIART generated candidate reference sheets under `assets/generated/images/wood-crate-three-levels*.png` and `assets/generated/images/large-ice-chain-overlays*.png`. They remain generated references; runtime uses the transparent/cropped PNGs listed above for reliable board readability.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level=/tmp/codex-obstacle-visual-level.json --screenshot=/tmp/codex-obstacle-visual-check-3.png
+```
+
+## 2026-06-28 - Lock/Ice Obstacles, Refill Control, and Playable Outline
+
+### Goal
+
+- Reduce system-created chain reactions after refill, draw disabled-cell holes as part of the board outline, improve drag/rebound feedback, and add two configurable strategic overlay obstacles.
+
+### Implemented
+
+- Added lock-chain and ice overlay obstacles on normal colored fuzzies.
+- Chained and iced fuzzies still participate in same-color connected groups by their underlying fuzzy color.
+- Matches and booster hits remove only the lock/ice layer and leave the fuzzy in place.
+- Rows or columns containing a lock chain now rebound instead of dragging and do not spend a move.
+- Ice-covered fuzzies can move with row and column drags.
+- The level editor now has lock-chain and ice brushes plus lock/ice target counts; level JSON exports `chains`, `ice`, `chain_target`, and `ice_target`.
+- Refill safety now fixes the same-color cluster size check and runs a light post-refill reroll pass to reduce immediate system-made matches.
+- Runtime board framing now traces the actual playable-cell outline and draws inner borders around disabled-cell holes instead of one fixed rectangle.
+- Added transparent runtime obstacle overlays at `assets/art/special/obstacle_chain.png` and `assets/art/special/obstacle_ice.png`.
+- AIART was also used to generate candidate obstacle sheets under `assets/generated/images/chain-ice-obstacle-overlays*.png`; those candidates are kept as generated references, while the runtime uses the transparent overlay PNGs so the underlying fuzzy color remains visible.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level=res://data/levels/level_001.json --screenshot=/tmp/codex-disabled-outline-check.png
+```
+
 ## 2026-06-26 - Candy UI and Asset Pass
 
 ### Goal
@@ -195,3 +317,125 @@ Additional screenshot checks were run for:
 
 - `--level=res://data/levels/level_001.json --screenshot=/tmp/codex-level-json-2.png`
 - `--level-editor --screenshot=/tmp/codex-level-editor.png`
+
+## 2026-06-28 - Large Fuzzy and Board Boosters
+
+### Goal
+
+- Add a hand-placed 2x2 colored large fuzzy blocker.
+- Make match sizes create clickable board boosters.
+
+### Implemented
+
+- Added the `BIG_FUZZ` tile kind.
+- Added an editor brush for 2x2 large fuzzies. Saved levels now include a `big_fuzzies` list with anchor and color data.
+- Large fuzzies are stored as one 2x2 object with a top-left anchor. The object renders as one enlarged fuzzy, falls together, clears together, and is not randomly generated on ordinary boards.
+- Large fuzzy cells do not self-connect into a free 4-match. The anchor counts as one colored single for external same-color connected groups.
+- Dragging from a large fuzzy moves the two occupied rows or two occupied columns together. A normal one-line drag that would split another large fuzzy rebounds.
+- Pause menu and level-editor overlays now reset board interaction state and block pointer input from leaking through to the board.
+- Groups of 4 create a directional arrow booster at the last moved-in matched cell; groups of 5 create a bomb booster; groups of 6+ create a rainbow booster.
+- Board boosters are clicked to activate and spend 1 move.
+- Arrow boosters clear one line in their stored direction. Bomb boosters clear 3x3. Rainbow boosters target 9 cells, prioritizing wood crates, then large fuzzies, then target-color fuzzies, then random board elements.
+- Added AIART-sourced large fuzzy art at `assets/art/special/large_fuzzy.png` and generated polished board-booster icons at `assets/art/special/booster_arrow.png`, `assets/art/special/booster_bomb.png`, and `assets/art/special/booster_rainbow.png`.
+- `export_presets.cfg` now includes `assets/art/special/*.png` so these runtime-loaded assets are included in Web exports.
+- Fixed match scanning so valid 3+ groups are not skipped after scanning non-anchor cells of a large fuzzy.
+- Hidden large-fuzzy part nodes stay hidden during snap and rebound animations, preventing small fuzzy flicker while dragging the 2x2 object.
+
+### Verification
+
+The following commands passed after this change:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+```
+
+## 2026-06-28 - Booster Colorless Rules and Five-Color Large Fuzzies
+
+### Goal
+
+- Finish the follow-up rule pass for colorless board boosters, booster chain reactions, color-specific large fuzzy art, and overlay draw order.
+
+### Implemented
+
+- Board boosters no longer store generated color data and are excluded from same-color match scanning, target-color collection, paint groups, and rainbow target-color prioritization.
+- Booster effects that hit another board booster now trigger that booster and clear it through the same resolution pass.
+- Drag highlighting leaves booster sprites at their normal size while still moving them with the dragged row or column.
+- Overlay layer draw order is raised above board tiles, and result popups reset active drag/preview tile z-index before showing.
+- Added five color-specific large fuzzy assets: `large_fuzzy_red.png`, `large_fuzzy_yellow.png`, `large_fuzzy_green.png`, `large_fuzzy_blue.png`, and `large_fuzzy_purple.png`. The older `large_fuzzy.png` remains only as a fallback.
+- Smoke coverage now checks that boosters are unmatchable and that booster-on-booster hits chain-trigger.
+
+### Verification
+
+The following commands passed after this follow-up pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --screenshot=/tmp/codex-game-check.png
+```
+
+## 2026-06-28 - Disabled Gaps, Match Residue, and Large Fuzzy Visual Cleanup
+
+### Goal
+
+- Fix reported issues where large fuzzy art looked inconsistent, disabled-cell drags showed blank gaps, and visible connected groups could remain after resolution.
+
+### Implemented
+
+- Disabled terrain cells now render as holes during play, with no board-slot rectangle drawn in the disabled positions.
+- Disabled terrain cells split row and column drags into continuous playable segments. Drag preview, snap, rebound, and committed shifts operate on the selected segment instead of wrapping across disabled gaps.
+- Added smoke coverage for disabled-gap drag behavior and for ensuring resolved boards do not retain immediate 3+ connected groups.
+- Made large fuzzy runtime visuals use the same generated fuzzy texture family as normal fuzzies, scaled to the 2x2 footprint. The AI-generated `large_fuzzy*.png` assets remain in the tree as generated/abandoned art but are not used at runtime.
+- Adjusted big-fuzzy match scanning so starting from a non-anchor part redirects to the anchor instead of silently skipping a possible cluster.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --screenshot=/tmp/codex-game-check.png
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level=/tmp/codex-big-fuzz-level.json --screenshot=/tmp/codex-big-fuzz-check.png
+```
+
+## 2026-06-28 - Four-Match Booster Rule Removal
+
+### Goal
+
+- Make 4-tile connected groups clear normally instead of creating arrow boosters.
+
+### Implemented
+
+- Match-size booster generation now starts at 5 tiles.
+- 4-tile groups clear all four tiles with no reserved booster cell.
+- 5-tile groups still create bomb boosters, and 6+ groups still create rainbow boosters.
+- Existing arrow booster activation behavior remains for any arrow boosters already present in a board state.
+- Smoke coverage now checks that 4 matches do not generate boosters and 5 matches still generate bombs.
+
+### Verification
+
+The following commands passed after this pass:
+
+```bash
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx --quit-after 3
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --drag-input-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --big-fuzz-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --smoke-test --stage=4
+/Applications/Godot.app/Contents/MacOS/Godot --headless --path /Users/happyelements/ai项目/codex-game-mx -- --level-persistence-test
+/Applications/Godot.app/Contents/MacOS/Godot --path /Users/happyelements/ai项目/codex-game-mx -- --level=res://data/levels/level_001.json --screenshot=/tmp/codex-disabled-hole-check.png
+```

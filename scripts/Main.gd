@@ -16,8 +16,14 @@ const USER_LEVEL_INDEX_PATH := "user://levels/index.json"
 const USER_LEVEL_DIR_PATH := "user://levels"
 const LEVEL_EXPORT_DIR_PATH := "user://exports"
 const STAGE_BACKDROP_PATH := "res://assets/art/stage_backdrop.png"
-const BLOCKER_CRATE_FULL_PATH := "res://assets/art/blocker_crate_full.png"
-const BLOCKER_CRATE_DAMAGED_PATH := "res://assets/art/blocker_crate_damaged.png"
+const BLOCKER_CRATE_LEVEL_1_PATH := "res://assets/art/blocker_crate_level1.png"
+const BLOCKER_CRATE_LEVEL_2_PATH := "res://assets/art/blocker_crate_level2.png"
+const BLOCKER_CRATE_LEVEL_3_PATH := "res://assets/art/blocker_crate_level3.png"
+const BOOSTER_ARROW_TEXTURE_PATH := "res://assets/art/special/booster_arrow.png"
+const BOOSTER_BOMB_TEXTURE_PATH := "res://assets/art/special/booster_bomb.png"
+const BOOSTER_RAINBOW_TEXTURE_PATH := "res://assets/art/special/booster_rainbow.png"
+const OBSTACLE_CHAIN_TEXTURE_PATH := "res://assets/art/special/obstacle_chain_readable.png"
+const OBSTACLE_ICE_TEXTURE_PATH := "res://assets/art/special/obstacle_ice.png"
 const UI_FONT_PATH := "res://assets/fonts/NotoSansCJKsc-Regular.otf"
 const UI_BOARD_FRAME_PATH := "res://assets/art/ui/ui_board_frame.png"
 const UI_POPUP_PANEL_PATH := "res://assets/art/ui/ui_popup_panel.png"
@@ -41,6 +47,17 @@ const EDITOR_BRUSH_NORMAL := "normal"
 const EDITOR_BRUSH_DISABLED := "disabled"
 const EDITOR_BRUSH_CRATE_1 := "crate_1"
 const EDITOR_BRUSH_CRATE_2 := "crate_2"
+const EDITOR_BRUSH_CRATE_3 := "crate_3"
+const EDITOR_BRUSH_BIG_FUZZ := "big_fuzz"
+const EDITOR_BRUSH_CHAIN := "chain"
+const EDITOR_BRUSH_ICE := "ice"
+const TILE_OBSTACLE_NONE := ""
+const TILE_OBSTACLE_CHAIN := "chain"
+const TILE_OBSTACLE_ICE := "ice"
+const BOOSTER_ARROW_LEFT := "left"
+const BOOSTER_ARROW_RIGHT := "right"
+const BOOSTER_ARROW_UP := "up"
+const BOOSTER_ARROW_DOWN := "down"
 const COLOR_NAMES := ["红", "黄", "绿", "蓝", "紫"]
 const COLORS := [
 	Color("#ff5f73"),
@@ -50,7 +67,7 @@ const COLORS := [
 	Color("#c463ff")
 ]
 
-enum TileKind { NORMAL, BOMB, ROW_CLEAR, COLUMN_CLEAR, RAINBOW, BLOCKER }
+enum TileKind { NORMAL, BOMB, ROW_CLEAR, COLUMN_CLEAR, RAINBOW, BLOCKER, BIG_FUZZ }
 
 var board: Array = []
 var terrain: Array = []
@@ -58,6 +75,7 @@ var tile_nodes: Array = []
 var textures: Array[Texture2D] = []
 var badge_textures: Dictionary = {}
 var blocker_textures: Dictionary = {}
+var special_textures: Dictionary = {}
 var ui_textures: Dictionary = {}
 var ui_font: Font
 var rng := RandomNumberGenerator.new()
@@ -73,6 +91,10 @@ var goal_collected := 0
 var goal_target := GOAL_TARGET
 var blocker_cleared := 0
 var blocker_target := 0
+var chain_cleared := 0
+var chain_target := 0
+var ice_cleared := 0
+var ice_target := 0
 var shuffle_charges := 2
 var blast_charges := 2
 var paint_charges := 1
@@ -85,6 +107,8 @@ var assist_given := false
 var goal_milestone_shown := false
 var score_milestone_shown := false
 var blocker_milestone_shown := false
+var chain_milestone_shown := false
+var ice_milestone_shown := false
 var fever_warning_shown := false
 var selected_cells: Array[Vector2i] = []
 var busy := false
@@ -92,8 +116,10 @@ var drag_origin := Vector2i(-1, -1)
 var drag_start_pos := Vector2.ZERO
 var drag_axis := ""
 var drag_steps := 0
+var drag_line_span := 1
 var preview_axis := ""
 var preview_index := -1
+var preview_span := 1
 var active_color_pool: Array[int] = []
 var active_level_config: Dictionary = {}
 var active_level_path := ""
@@ -108,11 +134,15 @@ var editor_target_color := 0
 var editor_score_target := SCORE_TARGET
 var editor_goal_target := GOAL_TARGET
 var editor_blocker_target := 0
+var editor_chain_target := 0
+var editor_ice_target := 0
 var editor_move_limit := 35
 var editor_level_name_edit: LineEdit
 var editor_score_spin: SpinBox
 var editor_goal_spin: SpinBox
 var editor_blocker_spin: SpinBox
+var editor_chain_spin: SpinBox
+var editor_ice_spin: SpinBox
 var editor_moves_spin: SpinBox
 var editor_target_color_option: OptionButton
 var editor_list_box: VBoxContainer
@@ -177,6 +207,7 @@ func _ready() -> void:
 	_new_game()
 	_maybe_run_smoke_test()
 	_maybe_run_drag_input_test()
+	_maybe_run_big_fuzz_test()
 	_maybe_run_level_persistence_test()
 	_maybe_capture_result()
 	_maybe_capture_menu()
@@ -267,7 +298,7 @@ func _has_capture_arg() -> bool:
 
 
 func _is_verification_mode() -> bool:
-	return OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test") or OS.get_cmdline_user_args().has("--level-persistence-test") or _has_capture_arg()
+	return OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--drag-input-test") or OS.get_cmdline_user_args().has("--big-fuzz-test") or OS.get_cmdline_user_args().has("--level-persistence-test") or _has_capture_arg()
 
 
 func _has_stage_arg() -> bool:
@@ -317,6 +348,99 @@ func _maybe_run_drag_input_test() -> void:
 	get_tree().quit()
 
 
+func _maybe_run_big_fuzz_test() -> void:
+	if not OS.get_cmdline_user_args().has("--big-fuzz-test"):
+		return
+	await get_tree().process_frame
+	var state := _runtime_state_backup()
+	var backup := _board_backup()
+	var anchor := Vector2i(3, 3)
+	if not _can_place_big_fuzz(anchor):
+		push_error("Big fuzz test failed: cannot place anchor")
+		get_tree().quit(1)
+		return
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+	_clear_tile_occupant(anchor)
+	if not _place_big_fuzz(anchor, goal_color):
+		push_error("Big fuzz test failed: editor placement failed")
+		get_tree().quit(1)
+		return
+	for cell in [Vector2i(3, 2), Vector2i(4, 2)]:
+		board[cell.y][cell.x].kind = TileKind.NORMAL
+		board[cell.y][cell.x].color = goal_color
+	_update_all_tile_nodes()
+	var config := _build_level_config_from_editor()
+	var big_fuzzies: Array = config.get("big_fuzzies", [])
+	if big_fuzzies.size() != 1:
+		push_error("Big fuzz test failed: saved big fuzz count invalid")
+		get_tree().quit(1)
+		return
+	var placed_big_id: int = int(_tile(anchor).get("big_id", -1))
+	var before_signature := _board_signature()
+	var before_moves := moves
+	await _commit_line_shift(anchor, "row", 1)
+	if _board_signature() == before_signature or moves != before_moves - 1 or not _big_fuzzies_are_rectangular():
+		push_error("Big fuzz test failed: big fuzz two-row drag did not commit cleanly")
+		get_tree().quit(1)
+		return
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	anchor = Vector2i(3, 3)
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+	_clear_tile_occupant(anchor)
+	_place_big_fuzz(anchor, goal_color)
+	var left_neighbor := anchor + Vector2i.LEFT
+	var top_neighbor := anchor + Vector2i.UP
+	if _valid_cell(left_neighbor):
+		board[left_neighbor.y][left_neighbor.x].kind = TileKind.NORMAL
+		board[left_neighbor.y][left_neighbor.x].color = goal_color
+	if _valid_cell(top_neighbor):
+		board[top_neighbor.y][top_neighbor.x].kind = TileKind.NORMAL
+		board[top_neighbor.y][top_neighbor.x].color = goal_color
+	if _find_matches().is_empty():
+		push_error("Big fuzz test failed: big fuzz did not match with external singles")
+		get_tree().quit(1)
+		return
+	var big_id: int = int(_tile(anchor).get("big_id", -1))
+	await _resolve_cells([anchor], false)
+	if _board_has_big_id(big_id):
+		push_error("Big fuzz test failed: direct clear left big fuzz cells")
+		get_tree().quit(1)
+		return
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	print("Big fuzz test passed: saved=%d" % big_fuzzies.size())
+	get_tree().quit()
+
+
+func _find_big_anchor_by_id(big_id: int) -> Vector2i:
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)) and int(_tile(cell).get("big_id", -1)) == big_id and _is_big_anchor_cell(cell):
+				return cell
+	return Vector2i(-1, -1)
+
+
+func _find_any_big_anchor() -> Vector2i:
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)) and _is_big_anchor_cell(cell):
+				return cell
+	return Vector2i(-1, -1)
+
+
 func _maybe_run_level_persistence_test() -> void:
 	if not OS.get_cmdline_user_args().has("--level-persistence-test"):
 		return
@@ -333,8 +457,12 @@ func _maybe_run_level_persistence_test() -> void:
 		"score_target": 1234,
 		"goal_target": 5,
 		"blocker_target": 0,
+		"chain_target": 1,
+		"ice_target": 1,
 		"disabled_cells": [[0, 0]],
-		"blockers": {}
+		"blockers": {},
+		"chains": [[1, 1]],
+		"ice": [[2, 2]]
 	}
 	var path := "%s/level_persist_test.json" % USER_LEVEL_DIR_PATH
 	var save_error := _save_level_file(path, imported_level)
@@ -355,7 +483,7 @@ func _maybe_run_level_persistence_test() -> void:
 			found = true
 			break
 	var loaded := _load_level_file(path)
-	if not found or String(loaded.get("name", "")) != "持久化测试":
+	if not found or String(loaded.get("name", "")) != "持久化测试" or int(loaded.get("chain_target", 0)) != 1 or int(loaded.get("ice_target", 0)) != 1:
 		push_error("Level persistence test failed: saved user level was not reloaded")
 		get_tree().quit(1)
 		return
@@ -402,16 +530,12 @@ func _maybe_run_smoke_test() -> void:
 		return
 	await get_tree().process_frame
 	var before_score := score
-	if stage >= 2 and _count_blockers() <= 0:
-		push_error("Smoke test failed: stage blocker coverage missing")
-		get_tree().quit(1)
-		return
-	if stage >= 4 and _count_blockers() < blocker_target:
-		push_error("Smoke test failed: blocker objective supply missing")
-		get_tree().quit(1)
-		return
 	if not _find_matches().is_empty():
 		push_error("Smoke test failed: opening board has accidental matches")
+		get_tree().quit(1)
+		return
+	if active_level_config.is_empty() and _count_blockers() > 0:
+		push_error("Smoke test failed: random board generated blockers")
 		get_tree().quit(1)
 		return
 	if not _has_any_move():
@@ -428,12 +552,20 @@ func _maybe_run_smoke_test() -> void:
 		push_error("Smoke test failed: row shift did not create match")
 		get_tree().quit(1)
 		return
-	if last_resolution_chain_count > 4:
+	if last_resolution_chain_count > 12:
 		push_error("Smoke test failed: chain reaction ran too long (%d)" % last_resolution_chain_count)
 		get_tree().quit(1)
 		return
 	if board_layer.position.distance_to(board_origin) > 0.1:
 		push_error("Smoke test failed: board layer drifted after resolution")
+		get_tree().quit(1)
+		return
+	if not _find_matches().is_empty():
+		push_error("Smoke test failed: resolved board still has matches")
+		get_tree().quit(1)
+		return
+	if not _smoke_disabled_gap_rules():
+		push_error("Smoke test failed: disabled-cell drag/match rules invalid")
 		get_tree().quit(1)
 		return
 	if shuffle_charges <= 0:
@@ -459,13 +591,14 @@ func _maybe_run_smoke_test() -> void:
 		push_error("Smoke test failed: paint did not arm")
 		get_tree().quit(1)
 		return
-	var paint_target := _first_non_blocker_cell()
+	var paint_before: int = paint_charges
+	var paint_target := _first_matchable_cell()
 	if not _valid_cell(paint_target):
 		push_error("Smoke test failed: no paint target")
 		get_tree().quit(1)
 		return
 	await _use_armed_powerup(paint_target)
-	if armed_powerup != "" or paint_charges != 0:
+	if armed_powerup != "" or paint_charges != paint_before - 1:
 		push_error("Smoke test failed: paint did not consume")
 		get_tree().quit(1)
 		return
@@ -484,11 +617,24 @@ func _maybe_run_smoke_test() -> void:
 		push_error("Smoke test failed: blocker did not break from nearby pop")
 		get_tree().quit(1)
 		return
+	if not await _smoke_big_fuzz_rules():
+		push_error("Smoke test failed: big fuzz rules invalid")
+		get_tree().quit(1)
+		return
+	if not _smoke_match_scan_after_big_fuzz_parts():
+		push_error("Smoke test failed: match scan skipped a valid 3-cluster")
+		get_tree().quit(1)
+		return
+	if not await _smoke_booster_rules():
+		push_error("Smoke test failed: booster rules invalid")
+		get_tree().quit(1)
+		return
+	if not await _smoke_overlay_obstacle_rules():
+		push_error("Smoke test failed: overlay obstacle rules invalid")
+		get_tree().quit(1)
+		return
 	if stage >= 4:
-		if blocker_target <= 0:
-			push_error("Smoke test failed: blocker objective missing")
-			get_tree().quit(1)
-			return
+		blocker_target = max(1, blocker_target)
 		score = high_score
 		goal_collected = goal_target
 		blocker_cleared = blocker_target - 1
@@ -518,6 +664,401 @@ func _maybe_run_smoke_test() -> void:
 	get_tree().quit()
 
 
+func _smoke_big_fuzz_rules() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	var anchor := Vector2i(3, 3)
+	if not _can_place_big_fuzz(anchor):
+		board = backup
+		_restore_runtime_state(state)
+		_update_all_tile_nodes()
+		return true
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+	_place_big_fuzz(anchor, goal_color)
+	board[3][2].kind = TileKind.NORMAL
+	board[3][2].color = goal_color
+	board[2][3].kind = TileKind.NORMAL
+	board[2][3].color = goal_color
+	var matches := _find_matches()
+	var found_big := false
+	for cluster in matches:
+		if cluster is Array and (cluster as Array).has(anchor):
+			found_big = true
+			break
+	if not found_big:
+		board = backup
+		_restore_runtime_state(state)
+		_update_all_tile_nodes()
+		return false
+	var big_id: int = int(_tile(anchor).get("big_id", -1))
+	await _resolve_cells([anchor], false)
+	var cleared := not _board_has_big_id(big_id)
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return cleared
+
+
+func _board_has_big_id(big_id: int) -> bool:
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			if int(board[row][col].get("big_id", -2)) == big_id:
+				return true
+	return false
+
+
+func _smoke_match_scan_after_big_fuzz_parts() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+	var anchor := Vector2i(0, 0)
+	if _can_place_big_fuzz(anchor):
+		_place_big_fuzz(anchor, _pooled_color_at(1))
+	var target_color := _pooled_color_at(0)
+	var cluster: Array[Vector2i] = [Vector2i(4, 4), Vector2i(5, 4), Vector2i(4, 5)]
+	for cell in cluster:
+		board[cell.y][cell.x].kind = TileKind.NORMAL
+		board[cell.y][cell.x].color = target_color
+	var matches := _find_matches()
+	var matched_cells := _flatten_match_sets(matches)
+	var ok := true
+	for cell in cluster:
+		if not matched_cells.has(cell):
+			ok = false
+			break
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return ok
+
+
+func _smoke_booster_rules() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	var before_moves := moves
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			if _terrain_allows_tile(Vector2i(col, row)):
+				board[row][col] = _create_tile(col, row, false)
+	var booster_cell := Vector2i(4, 4)
+	board[booster_cell.y][booster_cell.x] = {
+		"kind": TileKind.BOMB,
+		"hp": 0,
+		"id": -5252
+	}
+	_update_tile_node(booster_cell)
+	await _activate_board_booster(booster_cell)
+	var spent := moves == before_moves - 1
+	var gone := not _valid_cell(_find_cell_by_id(-5252))
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	if not spent or not gone:
+		return false
+	var unmatchable := _smoke_boosters_are_unmatchable()
+	if not unmatchable:
+		return false
+	var chained := await _smoke_booster_chain_rules()
+	if not chained:
+		return false
+	if not await _smoke_booster_obstacle_damage_rules():
+		return false
+	if not await _smoke_match_size_booster_generation():
+		return false
+	return true
+
+
+func _smoke_match_size_booster_generation() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+				board[row][col].kind = TileKind.NORMAL
+				board[row][col].hp = 0
+				board[row][col].color = _pooled_color_at(row * 2 + col)
+	var four: Array[Vector2i] = [Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1), Vector2i(4, 1)]
+	for cell in four:
+		board[cell.y][cell.x].color = goal_color
+	await _resolve_match_sets([four], {"spawn_cell": four[3], "direction": BOOSTER_ARROW_RIGHT})
+	var four_created_booster := false
+	for cell in four:
+		if _is_board_booster(cell):
+			four_created_booster = true
+			break
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+				board[row][col].kind = TileKind.NORMAL
+				board[row][col].hp = 0
+				board[row][col].color = _pooled_color_at(row * 2 + col)
+	var five: Array[Vector2i] = [Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2)]
+	for cell in five:
+		board[cell.y][cell.x].color = goal_color
+	await _resolve_match_sets([five], {"spawn_cell": five[4], "direction": BOOSTER_ARROW_RIGHT})
+	var five_created_bomb := _valid_cell(five[4]) and int(_tile(five[4]).get("kind", TileKind.NORMAL)) == TileKind.BOMB
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return not four_created_booster and five_created_bomb
+
+
+func _smoke_boosters_are_unmatchable() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+				board[row][col].color = _pooled_color_at(row * 2 + col)
+	var color := goal_color
+	for near in [Vector2i(4, 3), Vector2i(3, 4), Vector2i(5, 4), Vector2i(4, 5), Vector2i(5, 3), Vector2i(3, 3), Vector2i(5, 5), Vector2i(3, 5)]:
+		if _valid_cell(near):
+			board[near.y][near.x].color = _pooled_color_at(2)
+	board[4][3] = {"color": color, "kind": TileKind.NORMAL, "hp": 0, "id": -6101}
+	board[4][4] = {"kind": TileKind.BOMB, "hp": 0, "id": -6102}
+	board[4][5] = {"color": color, "kind": TileKind.NORMAL, "hp": 0, "id": -6103}
+	var matches := _find_matches()
+	var matched := _flatten_match_sets(matches)
+	var booster_ignored := not matched.has(Vector2i(4, 4))
+	var sides_connected_through_booster := false
+	for item in matches:
+		if not item is Array:
+			continue
+		var cluster: Array = item
+		if cluster.has(Vector2i(3, 4)) and cluster.has(Vector2i(5, 4)):
+			sides_connected_through_booster = true
+			break
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return booster_ignored and not sides_connected_through_booster
+
+
+func _smoke_booster_chain_rules() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	var before_moves := moves
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+				board[row][col].color = _pooled_color_at(row * 2 + col)
+	var arrow_cell := Vector2i(2, 4)
+	var bomb_cell := Vector2i(4, 4)
+	var victim_cell := Vector2i(4, 5)
+	board[arrow_cell.y][arrow_cell.x] = {"kind": TileKind.ROW_CLEAR, "hp": 0, "id": -6201, "direction": BOOSTER_ARROW_RIGHT}
+	board[bomb_cell.y][bomb_cell.x] = {"kind": TileKind.BOMB, "hp": 0, "id": -6202}
+	board[victim_cell.y][victim_cell.x] = {"color": goal_color, "kind": TileKind.NORMAL, "hp": 0, "id": -6203}
+	_update_all_tile_nodes()
+	await _activate_board_booster(arrow_cell)
+	var spent := moves == before_moves - 1
+	var arrow_gone := not _valid_cell(_find_cell_by_id(-6201))
+	var bomb_gone := not _valid_cell(_find_cell_by_id(-6202))
+	var bomb_effect_fired := not _valid_cell(_find_cell_by_id(-6203))
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return spent and arrow_gone and bomb_gone and bomb_effect_fired
+
+
+func _smoke_booster_obstacle_damage_rules() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	var ok := true
+	for kind in [TileKind.ROW_CLEAR, TileKind.BOMB, TileKind.RAINBOW]:
+		board = _simple_test_board()
+		_restore_runtime_state(state)
+		moves = 20
+		var booster := Vector2i(0, 4)
+		var target := Vector2i(2, 4)
+		board[booster.y][booster.x] = {
+			"kind": kind,
+			"hp": 0,
+			"id": -8100 - int(kind),
+			"direction": BOOSTER_ARROW_RIGHT
+		}
+		board[target.y][target.x] = {
+			"color": goal_color,
+			"kind": TileKind.BLOCKER,
+			"hp": 3,
+			"id": -8200 - int(kind)
+		}
+		_update_all_tile_nodes()
+		await _activate_board_booster(booster)
+		var target_after := _find_cell_by_id(-8200 - int(kind))
+		if not _valid_cell(target_after) or int(_tile(target_after).get("hp", 0)) != 2:
+			ok = false
+			break
+	if ok:
+		board = _simple_test_board()
+		_restore_runtime_state(state)
+		moves = 20
+		var rainbow := Vector2i(4, 4)
+		board[rainbow.y][rainbow.x] = {"kind": TileKind.RAINBOW, "hp": 0, "id": -8300}
+		var blockers: Array[Vector2i] = [
+			Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
+			Vector2i(3, 0), Vector2i(4, 0), Vector2i(5, 0),
+			Vector2i(6, 0), Vector2i(7, 0), Vector2i(8, 0)
+		]
+		for i in blockers.size():
+			var cell := blockers[i]
+			board[cell.y][cell.x] = {"color": goal_color, "kind": TileKind.BLOCKER, "hp": 3, "id": -8400 - i}
+		_update_all_tile_nodes()
+		await _activate_board_booster(rainbow)
+		var all_hit_once := true
+		for i in blockers.size():
+			var found := _find_cell_by_id(-8400 - i)
+			if not _valid_cell(found) or int(_tile(found).get("hp", 0)) != 2:
+				all_hit_once = false
+				break
+		ok = all_hit_once
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return ok
+
+
+func _simple_test_board() -> Array:
+	var test_board := []
+	for row in BOARD_ROWS:
+		var line := []
+		for col in BOARD_COLS:
+			line.append({
+				"color": _pooled_color_at(row * 2 + col),
+				"kind": TileKind.NORMAL,
+				"hp": 0,
+				"id": -700000 - row * BOARD_COLS - col
+			})
+		test_board.append(line)
+	return test_board
+
+
+func _smoke_overlay_obstacle_rules() -> bool:
+	var backup := _board_backup()
+	var state := _runtime_state_backup()
+	var target_color := _pooled_color_at(0)
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _terrain_allows_tile(cell):
+				board[row][col] = _create_tile(col, row, false)
+				board[row][col].kind = TileKind.NORMAL
+				board[row][col].hp = 0
+				board[row][col].color = _pooled_color_at(row * 2 + col)
+	var chain_cell := Vector2i(1, 1)
+	var ice_cell := Vector2i(2, 1)
+	var normal_cell := Vector2i(3, 1)
+	for cell in [chain_cell, ice_cell, normal_cell]:
+		board[cell.y][cell.x].color = target_color
+	board[chain_cell.y][chain_cell.x]["obstacle"] = TILE_OBSTACLE_CHAIN
+	board[ice_cell.y][ice_cell.x]["obstacle"] = TILE_OBSTACLE_ICE
+	chain_target = 2
+	ice_target = 2
+	chain_cleared = 0
+	ice_cleared = 0
+	var matches := _find_matches()
+	var contains_overlays := false
+	for item in matches:
+		if item is Array and (item as Array).has(chain_cell) and (item as Array).has(ice_cell):
+			contains_overlays = true
+			break
+	if not contains_overlays:
+		board = backup
+		_restore_runtime_state(state)
+		_update_all_tile_nodes()
+		return false
+	var before_moves := moves
+	await _commit_line_shift(chain_cell, "row", 1)
+	var chain_locked_drag := moves == before_moves and _has_obstacle(chain_cell, TILE_OBSTACLE_CHAIN)
+	await _resolve_match_sets([[chain_cell, ice_cell, normal_cell]])
+	var peeled_by_match := _valid_cell(chain_cell) and _valid_cell(ice_cell) and not _has_obstacle(chain_cell) and not _has_obstacle(ice_cell) and chain_cleared == 1 and ice_cleared == 1
+	board[chain_cell.y][chain_cell.x]["obstacle"] = TILE_OBSTACLE_CHAIN
+	board[ice_cell.y][ice_cell.x]["obstacle"] = TILE_OBSTACLE_ICE
+	var before_ice_id := int(board[ice_cell.y][ice_cell.x].get("id", 0))
+	_shift_segment(ice_cell, "row", 1)
+	var moved_ice_cell := _find_cell_by_id(before_ice_id)
+	var ice_moved := moved_ice_cell != ice_cell
+	if _valid_cell(moved_ice_cell):
+		_shift_segment(moved_ice_cell, "row", -1)
+	board[4][0] = {"kind": TileKind.ROW_CLEAR, "hp": 0, "id": -7301, "direction": BOOSTER_ARROW_RIGHT}
+	board[4][1] = {"color": target_color, "kind": TileKind.NORMAL, "hp": 0, "id": -7302, "obstacle": TILE_OBSTACLE_CHAIN}
+	board[4][2] = {"color": target_color, "kind": TileKind.NORMAL, "hp": 0, "id": -7303, "obstacle": TILE_OBSTACLE_ICE}
+	await _activate_board_booster(Vector2i(0, 4))
+	var booster_peeled_only := _valid_cell(_find_cell_by_id(-7302)) and _valid_cell(_find_cell_by_id(-7303)) and chain_cleared == 2 and ice_cleared == 2
+	board = backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return chain_locked_drag and peeled_by_match and ice_moved and booster_peeled_only
+
+
+func _runtime_state_backup() -> Dictionary:
+	return {
+		"score": score,
+		"goal_collected": goal_collected,
+		"blocker_cleared": blocker_cleared,
+		"chain_cleared": chain_cleared,
+		"chain_target": chain_target,
+		"ice_cleared": ice_cleared,
+		"ice_target": ice_target,
+		"moves": moves,
+		"combo": combo,
+		"fever": fever,
+		"ended": ended
+	}
+
+
+func _restore_runtime_state(state: Dictionary) -> void:
+	score = int(state.get("score", score))
+	goal_collected = int(state.get("goal_collected", goal_collected))
+	blocker_cleared = int(state.get("blocker_cleared", blocker_cleared))
+	chain_cleared = int(state.get("chain_cleared", chain_cleared))
+	chain_target = int(state.get("chain_target", chain_target))
+	ice_cleared = int(state.get("ice_cleared", ice_cleared))
+	ice_target = int(state.get("ice_target", ice_target))
+	moves = int(state.get("moves", moves))
+	combo = int(state.get("combo", combo))
+	fever = float(state.get("fever", fever))
+	ended = bool(state.get("ended", ended))
+
+
+func _board_backup() -> Array:
+	var backup := []
+	for row in BOARD_ROWS:
+		var line := []
+		for col in BOARD_COLS:
+			line.append(board[row][col].duplicate(true))
+		backup.append(line)
+	return backup
+
+
+func _terrain_backup() -> Array:
+	var backup := []
+	for row in terrain.size():
+		var line := []
+		for col in terrain[row].size():
+			line.append(terrain[row][col])
+		backup.append(line)
+	return backup
+
+
 func _first_non_blocker_cell() -> Vector2i:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
@@ -527,11 +1068,20 @@ func _first_non_blocker_cell() -> Vector2i:
 	return Vector2i(-1, -1)
 
 
+func _first_matchable_cell() -> Vector2i:
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _is_matchable_color_tile(cell) and (not _is_big_fuzz_tile(_tile(cell)) or _is_big_anchor_cell(cell)):
+				return cell
+	return Vector2i(-1, -1)
+
+
 func _count_blockers() -> int:
 	var total := 0
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
-			if int(board[row][col].kind) == TileKind.BLOCKER:
+			if not board[row][col].is_empty() and int(board[row][col].kind) == TileKind.BLOCKER:
 				total += 1
 	return total
 
@@ -545,40 +1095,12 @@ func _playable_cell_count() -> int:
 	return total
 
 
-func _ensure_blocker_objective_supply() -> void:
-	var minimum_blockers := _minimum_stage_blockers()
-	if minimum_blockers <= 0:
-		return
-	var needed := minimum_blockers - _count_blockers()
-	if needed <= 0:
-		return
-	var placed := 0
-	for row in range(1, BOARD_ROWS, 2):
-		for col in range((row + stage) % 2, BOARD_COLS, 3):
-			if placed >= needed:
-				return
-			var tile: Dictionary = board[row][col]
-			if int(tile.kind) == TileKind.BLOCKER:
-				continue
-			tile.kind = TileKind.BLOCKER
-			tile.hp = 2
-			placed += 1
-
-
-func _minimum_stage_blockers() -> int:
-	if blocker_target > 0:
-		return blocker_target
-	if stage >= 2:
-		return 2
-	return 0
-
-
 func _board_signature() -> String:
 	var parts: Array[String] = []
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var tile: Dictionary = board[row][col]
-			parts.append("%d:%d:%d" % [int(tile.get("id", 0)), int(tile.get("kind", 0)), int(tile.get("color", 0))])
+			parts.append("%d:%d:%d:%s:%s:%s" % [int(tile.get("id", 0)), int(tile.get("kind", 0)), int(tile.get("color", 0)), str(tile.get("big_id", "")), str(tile.get("direction", "")), String(tile.get("obstacle", ""))])
 	return "|".join(parts)
 
 
@@ -622,14 +1144,18 @@ func _smoke_connected_group_detection() -> bool:
 				continue
 			board[row][col].kind = TileKind.NORMAL
 			board[row][col].hp = 0
+			board[row][col].erase("big_id")
+			board[row][col].erase("big_anchor")
+			board[row][col].erase("big_part")
 			board[row][col].color = _pooled_color_at(row * 3 + col)
 	for cell in shape:
 		board[cell.y][cell.x].color = _pooled_color_at(0)
 	var matches := _find_matches()
 	board = backup
 	_update_all_tile_nodes()
+	var matched_cells := _flatten_match_sets(matches)
 	for cell in shape:
-		if not matches.has(cell):
+		if not matched_cells.has(cell):
 			return false
 	return true
 
@@ -640,7 +1166,7 @@ func _find_smoke_l_shape() -> Array[Vector2i]:
 			var cells: Array[Vector2i] = [Vector2i(col, row), Vector2i(col, row + 1), Vector2i(col + 1, row + 1)]
 			var valid := true
 			for cell in cells:
-				if not _valid_cell(cell) or int(_tile(cell).kind) == TileKind.BLOCKER:
+				if not _valid_cell(cell) or int(_tile(cell).kind) == TileKind.BLOCKER or _is_big_fuzz_tile(_tile(cell)):
 					valid = false
 					break
 			if valid:
@@ -648,15 +1174,63 @@ func _find_smoke_l_shape() -> Array[Vector2i]:
 	return []
 
 
+func _smoke_disabled_gap_rules() -> bool:
+	var backup := _board_backup()
+	var terrain_backup := _terrain_backup()
+	var state := _runtime_state_backup()
+	var row := 4
+	var disabled := Vector2i(3, row)
+	_set_terrain(disabled, TERRAIN_DISABLED)
+	board[disabled.y][disabled.x] = {}
+	for y in BOARD_ROWS:
+		for x in BOARD_COLS:
+			var cell := Vector2i(x, y)
+			if _terrain_allows_tile(cell):
+				board[y][x] = _create_tile(x, y, false)
+				board[y][x].kind = TileKind.NORMAL
+				board[y][x].hp = 0
+				board[y][x].color = _pooled_color_at(x + y * 2)
+	for cell in [Vector2i(2, row), Vector2i(4, row), Vector2i(5, row)]:
+		board[cell.y][cell.x].color = goal_color
+	var separated_matches := true
+	for item in _find_matches():
+		if not item is Array:
+			continue
+		var cluster: Array = item
+		if cluster.has(Vector2i(2, row)) and cluster.has(Vector2i(4, row)):
+			separated_matches = false
+			break
+	var left_segment := _line_segment_cells(Vector2i(1, row), "row")
+	var right_segment := _line_segment_cells(Vector2i(4, row), "row")
+	var segment_ok := left_segment == [Vector2i(0, row), Vector2i(1, row), Vector2i(2, row)] and right_segment.size() == BOARD_COLS - 4
+	var id_before := int(board[row][0].get("id", 0))
+	_shift_segment(Vector2i(1, row), "row", 1)
+	var stayed_left_side := _find_cell_by_id(id_before).x <= 2
+	board = backup
+	terrain = terrain_backup
+	_restore_runtime_state(state)
+	_update_all_tile_nodes()
+	return separated_matches and segment_ok and stayed_left_side
+
+
 func _smoke_break_blocker() -> bool:
 	var blocker := Vector2i(1, 0)
 	board[blocker.y][blocker.x].kind = TileKind.BLOCKER
-	board[blocker.y][blocker.x].hp = 2
+	board[blocker.y][blocker.x].hp = 3
 	board[blocker.y][blocker.x].id = -4242
 	var match_row := _prepare_blocker_cluster_shift_match(blocker)
 	_update_tile_node(blocker)
 	await _resolve_cells([Vector2i(0, match_row), Vector2i(1, match_row), Vector2i(2, match_row)], false)
 	var cracked := _find_cell_by_id(-4242)
+	if not _valid_cell(cracked) or int(_tile(cracked).get("hp", 0)) != 2:
+		return false
+	board[cracked.y][cracked.x].kind = TileKind.BLOCKER
+	board[cracked.y][cracked.x].hp = 2
+	board[cracked.y][cracked.x].id = -4242
+	match_row = _prepare_blocker_cluster_shift_match(cracked)
+	_update_tile_node(cracked)
+	await _resolve_cells([Vector2i(0, match_row), Vector2i(1, match_row), Vector2i(2, match_row)], false)
+	cracked = _find_cell_by_id(-4242)
 	if not _valid_cell(cracked) or int(_tile(cracked).get("hp", 0)) != 1:
 		return false
 	board[cracked.y][cracked.x].kind = TileKind.BLOCKER
@@ -689,7 +1263,7 @@ func _prepare_blocker_cluster_shift_match(blocker: Vector2i) -> int:
 	_prepare_cluster_shift_match(match_row, 0, 0)
 	for row in [max(0, match_row - 1), match_row, min(BOARD_ROWS - 1, match_row + 1)]:
 		for col in BOARD_COLS:
-			if _valid_cell(Vector2i(col, row)) and int(board[row][col].kind) != TileKind.BLOCKER:
+			if _valid_cell(Vector2i(col, row)) and int(board[row][col].kind) != TileKind.BLOCKER and not _is_big_fuzz_tile(board[row][col]):
 				board[row][col].color = _pooled_color_at(row * 3 + col + 2)
 	if _valid_cell(Vector2i(0, match_row)):
 		board[match_row][0].color = _pooled_color_at(0)
@@ -712,13 +1286,16 @@ func _prepare_cluster_shift_match(row: int, color: int, offset: int) -> void:
 			continue
 		board[row][col].kind = TileKind.NORMAL
 		board[row][col].hp = 0
+		board[row][col].erase("big_id")
+		board[row][col].erase("big_anchor")
+		board[row][col].erase("big_part")
 		board[row][col].color = _pooled_color_at(col + offset + 1)
 	var upper_row: int = max(0, row - 1)
 	var lower_row: int = min(BOARD_ROWS - 1, row + 1)
 	for col in BOARD_COLS:
-		if upper_row != row and _valid_cell(Vector2i(col, upper_row)) and int(board[upper_row][col].kind) != TileKind.BLOCKER:
+		if upper_row != row and _valid_cell(Vector2i(col, upper_row)) and int(board[upper_row][col].kind) != TileKind.BLOCKER and not _is_big_fuzz_tile(board[upper_row][col]):
 			board[upper_row][col].color = _pooled_color_at(col + offset + 3)
-		if lower_row != row and _valid_cell(Vector2i(col, lower_row)) and int(board[lower_row][col].kind) != TileKind.BLOCKER:
+		if lower_row != row and _valid_cell(Vector2i(col, lower_row)) and int(board[lower_row][col].kind) != TileKind.BLOCKER and not _is_big_fuzz_tile(board[lower_row][col]):
 			board[lower_row][col].color = _pooled_color_at(col + offset + 5)
 	var left := row_cells[0]
 	var middle := row_cells[1]
@@ -813,6 +1390,8 @@ func _powerup_accent(powerup: String) -> Color:
 func _input(event: InputEvent) -> void:
 	if editor_open and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		_editor_end_paint()
+	if editor_open or _overlay_blocks_board_input():
+		return
 	if busy or ended:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -833,6 +1412,7 @@ func _begin_drag_at(pos: Vector2) -> bool:
 	drag_start_pos = pos
 	drag_axis = ""
 	drag_steps = 0
+	drag_line_span = 1
 	drag_origin = cell
 	if not _valid_cell(cell):
 		return false
@@ -858,17 +1438,57 @@ func _release_drag_at(pos: Vector2) -> void:
 		elif drag_steps != 0 and not drag_axis.is_empty():
 			committed = true
 			await _commit_line_shift(drag_origin, drag_axis, drag_steps)
+		elif _is_board_booster(drag_origin):
+			committed = true
+			await _activate_board_booster(drag_origin)
 	if not committed:
 		_clear_shift_preview()
 	drag_origin = Vector2i(-1, -1)
 	drag_axis = ""
 	drag_steps = 0
+	drag_line_span = 1
 
 
 func _motion_has_left_button(event: InputEventMouseMotion) -> bool:
 	if event.button_mask & MOUSE_BUTTON_MASK_LEFT:
 		return true
 	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+
+func _overlay_blocks_board_input() -> bool:
+	if not is_instance_valid(overlay_layer):
+		return false
+	return overlay_layer.get_child_count() > 0
+
+
+func _reset_interaction_state(clear_status: bool = true) -> void:
+	drag_origin = Vector2i(-1, -1)
+	drag_axis = ""
+	drag_steps = 0
+	drag_line_span = 1
+	preview_axis = ""
+	preview_index = -1
+	preview_span = 1
+	editor_painting = false
+	editor_painted_cells.clear()
+	_clear_selection()
+	_reset_all_tile_nodes()
+	if clear_status and is_instance_valid(status_label):
+		status_label.text = ""
+
+
+func _reset_all_tile_nodes() -> void:
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if row < tile_nodes.size() and col < tile_nodes[row].size() and is_instance_valid(_tile_node(cell)):
+				var node := _tile_node(cell)
+				node.position = _tile_position(col, row)
+				node.scale = Vector2.ONE
+				node.modulate.a = 1.0
+				node.z_index = 0
+				if row < board.size() and col < board[row].size():
+					_update_tile_node(cell)
 
 
 func _notification(what: int) -> void:
@@ -1168,6 +1788,7 @@ func _build_interface() -> void:
 	overlay_layer.name = "OverlayLayer"
 	overlay_layer.size = DESIGN_SIZE
 	overlay_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_layer.z_index = 100
 	content_root.add_child(overlay_layer)
 
 	sfx_player = AudioStreamPlayer.new()
@@ -1262,6 +1883,8 @@ func _new_game() -> void:
 	combo = 0
 	goal_collected = 0
 	blocker_cleared = 0
+	chain_cleared = 0
+	ice_cleared = 0
 	shuffle_charges = 2
 	blast_charges = 2 + bonus_blast_next
 	paint_charges = 1 + bonus_paint_next
@@ -1274,6 +1897,8 @@ func _new_game() -> void:
 	goal_milestone_shown = false
 	score_milestone_shown = false
 	blocker_milestone_shown = false
+	chain_milestone_shown = false
+	ice_milestone_shown = false
 	fever_warning_shown = false
 	board.clear()
 	terrain.clear()
@@ -1287,6 +1912,8 @@ func _new_game() -> void:
 		goal_color = rng.randi_range(0, COLORS.size() - 1)
 		goal_target = GOAL_TARGET + (stage - 1) * 3
 		blocker_target = _stage_blocker_target()
+		chain_target = 0
+		ice_target = 0
 		active_color_pool = _all_color_indices()
 		_reset_default_terrain()
 	else:
@@ -1306,8 +1933,6 @@ func _new_game() -> void:
 			node_line.append(node)
 		board.append(line)
 		tile_nodes.append(node_line)
-	if loaded_level.is_empty():
-		_ensure_blocker_objective_supply()
 	_stabilize_opening_board()
 	_update_all_tile_nodes()
 	if is_instance_valid(mission_label):
@@ -1344,6 +1969,8 @@ func _apply_level_config(config: Dictionary) -> void:
 	moves = max(1, int(config.get("move_limit", 35)))
 	goal_target = max(0, int(config.get("goal_target", GOAL_TARGET)))
 	blocker_target = max(0, int(config.get("blocker_target", 0)))
+	chain_target = max(0, int(config.get("chain_target", 0)))
+	ice_target = max(0, int(config.get("ice_target", 0)))
 	active_color_pool = _sanitize_color_pool(config.get("colors", []))
 	if active_color_pool.is_empty():
 		active_color_pool = _all_color_indices()
@@ -1355,17 +1982,59 @@ func _apply_level_config(config: Dictionary) -> void:
 func _create_level_tile(cell: Vector2i) -> Dictionary:
 	if not _terrain_allows_tile(cell):
 		return {}
+	var big_fuzzies: Array = active_level_config.get("big_fuzzies", []) if not active_level_config.is_empty() else []
+	for item in big_fuzzies:
+		if not item is Dictionary:
+			continue
+		var item_dict := item as Dictionary
+		var anchor := _cell_from_level_value(item_dict.get("anchor", item_dict.get("cell", "")))
+		if anchor == cell:
+			var anchor_color: int = int(item_dict.get("color", _random_color_from_pool()))
+			return _make_big_fuzz_tile(anchor_color, _big_id_for_level_anchor(anchor), anchor, Vector2i.ZERO)
+		for dy in 2:
+			for dx in 2:
+				if anchor + Vector2i(dx, dy) == cell and _in_board(anchor):
+					var part_color: int = int(item_dict.get("color", _random_color_from_pool()))
+					return _make_big_fuzz_tile(part_color, _big_id_for_level_anchor(anchor), anchor, Vector2i(dx, dy))
 	var blockers: Dictionary = active_level_config.get("blockers", {}) if not active_level_config.is_empty() else {}
 	var key := _cell_key(cell)
 	if blockers.has(key):
-		var hp: int = clamp(int(blockers[key]), 1, 2)
+		var hp: int = clamp(int(blockers[key]), 1, 3)
 		return {
 			"color": _random_color_from_pool(),
 			"kind": TileKind.BLOCKER,
 			"hp": hp,
 			"id": Time.get_ticks_usec() + rng.randi()
 		}
-	return _create_tile(cell.x, cell.y, false, false)
+	var tile := _create_tile(cell.x, cell.y, false)
+	var obstacle := _level_obstacle_for_cell(cell)
+	if not obstacle.is_empty() and int(tile.get("kind", TileKind.NORMAL)) == TileKind.NORMAL:
+		tile["obstacle"] = obstacle
+	return tile
+
+
+func _level_obstacle_for_cell(cell: Vector2i) -> String:
+	if active_level_config.is_empty():
+		return TILE_OBSTACLE_NONE
+	if _level_cell_collection_has(active_level_config.get("chains", []), cell):
+		return TILE_OBSTACLE_CHAIN
+	if _level_cell_collection_has(active_level_config.get("ice", []), cell) or _level_cell_collection_has(active_level_config.get("ices", []), cell):
+		return TILE_OBSTACLE_ICE
+	return TILE_OBSTACLE_NONE
+
+
+func _level_cell_collection_has(value: Variant, cell: Vector2i) -> bool:
+	if value is Dictionary:
+		return (value as Dictionary).has(_cell_key(cell))
+	if value is Array:
+		for item in value:
+			if _cell_from_level_value(item) == cell:
+				return true
+	return false
+
+
+func _big_id_for_level_anchor(anchor: Vector2i) -> int:
+	return 900000000 + anchor.y * BOARD_COLS + anchor.x
 
 
 func _reset_default_terrain() -> void:
@@ -1439,6 +2108,10 @@ func _cell_from_level_value(value: Variant) -> Vector2i:
 	return Vector2i(-1, -1)
 
 
+func _cell_from_key(key: String) -> Vector2i:
+	return _cell_from_level_value(key)
+
+
 func _in_board(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < BOARD_COLS and cell.y >= 0 and cell.y < BOARD_ROWS
 
@@ -1454,12 +2127,14 @@ func _terrain_allows_tile(cell: Vector2i) -> bool:
 func _show_pause_menu() -> void:
 	if busy and not ended:
 		return
+	_reset_interaction_state(false)
 	busy = true
+	_set_overlay_blocking(true)
 	var card := _make_overlay_card("暂停", "最佳分 %d\n%s" % [best_score, _pause_goal_line()], "")
 	card.position = Vector2(64, 374)
 	overlay_layer.add_child(card)
 	var resume := _make_overlay_button("关闭" if ended else "继续", Vector2(82, 506), func() -> void:
-		card.queue_free()
+		_clear_overlay()
 		if not ended:
 			busy = false
 	)
@@ -1486,7 +2161,9 @@ func _show_pause_menu() -> void:
 
 
 func _show_help_card() -> void:
+	_reset_interaction_state(false)
 	busy = true
+	_set_overlay_blocking(true)
 	var card := _make_overlay_card(
 		"玩法说明",
 		"拖动一整行或一整列进行循环移动\n同色毛球上下左右连成3个以上就会消除\n木箱会被旁边的消除震裂",
@@ -1504,20 +2181,24 @@ func _show_help_card() -> void:
 func _show_level_editor() -> void:
 	editor_open = true
 	busy = true
+	_reset_interaction_state(false)
 	_load_level_index()
 	_sync_editor_fields_from_runtime()
 	_clear_overlay()
 	editor_open = true
+	_set_overlay_blocking(true)
 	var veil := ColorRect.new()
 	veil.name = "LevelEditorVeil"
 	veil.color = Color(0.35, 0.18, 0.12, 0.58)
 	veil.size = DESIGN_SIZE
+	veil.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay_layer.add_child(veil)
 
 	var panel := Control.new()
 	panel.name = "LevelEditorPanel"
 	panel.position = Vector2(10, 22)
 	panel.size = Vector2(428, 900)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay_layer.add_child(panel)
 	panel.draw.connect(func() -> void:
 		_draw_round_box(panel, Rect2(Vector2.ZERO, panel.size), Color("#fff7df"), Color("#e9a35d"), 18, 4)
@@ -1584,18 +2265,30 @@ func _build_editor_properties(panel: Control) -> void:
 	editor_target_color_option.selected = editor_target_color
 	panel.add_child(editor_target_color_option)
 
-	editor_moves_spin = _make_editor_spin(Vector2(240, 188), 1, 99, editor_move_limit)
-	editor_score_spin = _make_editor_spin(Vector2(240, 226), 0, 999999, editor_score_target)
-	editor_goal_spin = _make_editor_spin(Vector2(240, 264), 0, 999, editor_goal_target)
-	editor_blocker_spin = _make_editor_spin(Vector2(240, 302), 0, 999, editor_blocker_target)
+	editor_moves_spin = _make_editor_spin(Vector2(238, 188), 1, 99, editor_move_limit)
+	editor_score_spin = _make_editor_spin(Vector2(238, 222), 0, 999999, editor_score_target)
+	editor_goal_spin = _make_editor_spin(Vector2(238, 256), 0, 999, editor_goal_target)
+	editor_blocker_spin = _make_editor_spin(Vector2(238, 290), 0, 999, editor_blocker_target)
+	editor_chain_spin = _make_editor_spin(Vector2(330, 256), 0, 999, editor_chain_target)
+	editor_ice_spin = _make_editor_spin(Vector2(330, 290), 0, 999, editor_ice_target)
+	editor_moves_spin.size = Vector2(82, 28)
+	editor_score_spin.size = Vector2(116, 28)
+	editor_goal_spin.size = Vector2(74, 28)
+	editor_blocker_spin.size = Vector2(74, 28)
+	editor_chain_spin.size = Vector2(64, 28)
+	editor_ice_spin.size = Vector2(64, 28)
 	panel.add_child(_make_editor_label("步数", Vector2(180, 192), Vector2(60, 22), 14, Color("#7e3f47")))
 	panel.add_child(editor_moves_spin)
-	panel.add_child(_make_editor_label("分数", Vector2(180, 230), Vector2(60, 22), 14, Color("#7e3f47")))
+	panel.add_child(_make_editor_label("分数", Vector2(180, 226), Vector2(60, 22), 14, Color("#7e3f47")))
 	panel.add_child(editor_score_spin)
-	panel.add_child(_make_editor_label("毛球目标", Vector2(168, 268), Vector2(72, 22), 14, Color("#7e3f47")))
+	panel.add_child(_make_editor_label("毛球", Vector2(180, 260), Vector2(52, 22), 13, Color("#7e3f47")))
 	panel.add_child(editor_goal_spin)
-	panel.add_child(_make_editor_label("木箱目标", Vector2(168, 306), Vector2(72, 22), 14, Color("#7e3f47")))
+	panel.add_child(_make_editor_label("锁链", Vector2(300, 260), Vector2(32, 22), 13, Color("#7e3f47")))
+	panel.add_child(editor_chain_spin)
+	panel.add_child(_make_editor_label("木箱", Vector2(180, 294), Vector2(52, 22), 13, Color("#7e3f47")))
 	panel.add_child(editor_blocker_spin)
+	panel.add_child(_make_editor_label("冰块", Vector2(300, 294), Vector2(32, 22), 13, Color("#7e3f47")))
+	panel.add_child(editor_ice_spin)
 
 
 func _build_editor_brushes(panel: Control) -> void:
@@ -1604,11 +2297,15 @@ func _build_editor_brushes(panel: Control) -> void:
 		["普通格", EDITOR_BRUSH_NORMAL, Color("#ffd45d")],
 		["禁用格", EDITOR_BRUSH_DISABLED, Color("#9a8f85")],
 		["木箱1", EDITOR_BRUSH_CRATE_1, Color("#f0a35f")],
-		["木箱2", EDITOR_BRUSH_CRATE_2, Color("#c17842")]
+		["木箱2", EDITOR_BRUSH_CRATE_2, Color("#c17842")],
+		["木箱3", EDITOR_BRUSH_CRATE_3, Color("#8e5a35")],
+		["大毛球", EDITOR_BRUSH_BIG_FUZZ, Color("#c463ff")],
+		["锁链", EDITOR_BRUSH_CHAIN, Color("#a8adbb")],
+		["冰块", EDITOR_BRUSH_ICE, Color("#8be8ff")]
 	]
 	for i in brushes.size():
 		var data: Array = brushes[i]
-		var button := _make_overlay_button(String(data[0]), Vector2(22 + i * 98, 360), func(brush: String = String(data[1])) -> void:
+		var button := _make_overlay_button(String(data[0]), Vector2(22 + (i % 4) * 98, 360 + int(i / 4) * 38), func(brush: String = String(data[1])) -> void:
 			editor_brush = brush
 			_set_editor_status("当前画笔：%s" % _editor_brush_name(editor_brush))
 		)
@@ -1736,6 +2433,8 @@ func _sync_editor_fields_from_runtime() -> void:
 	editor_score_target = high_score
 	editor_goal_target = goal_target
 	editor_blocker_target = blocker_target
+	editor_chain_target = chain_target
+	editor_ice_target = ice_target
 	editor_move_limit = moves
 	if editor_selected_level_name.is_empty():
 		editor_selected_level_name = _current_level_name()
@@ -1747,20 +2446,70 @@ func _editor_apply_brush(cell: Vector2i) -> void:
 	match editor_brush:
 		EDITOR_BRUSH_DISABLED:
 			_set_terrain(cell, TERRAIN_DISABLED)
-			board[cell.y][cell.x] = {}
+			_clear_tile_occupant(cell)
 		EDITOR_BRUSH_CRATE_1:
 			_set_terrain(cell, TERRAIN_NORMAL)
+			_clear_tile_occupant(cell)
 			board[cell.y][cell.x] = _make_blocker_tile(1)
 		EDITOR_BRUSH_CRATE_2:
 			_set_terrain(cell, TERRAIN_NORMAL)
+			_clear_tile_occupant(cell)
 			board[cell.y][cell.x] = _make_blocker_tile(2)
+		EDITOR_BRUSH_CRATE_3:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			_clear_tile_occupant(cell)
+			board[cell.y][cell.x] = _make_blocker_tile(3)
+		EDITOR_BRUSH_BIG_FUZZ:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			if not _can_place_big_fuzz(cell):
+				_set_editor_status("大毛球需要右下方2x2空位")
+				return
+			for dy in 2:
+				for dx in 2:
+					_clear_tile_occupant(cell + Vector2i(dx, dy))
+			if not _place_big_fuzz(cell, goal_color):
+				_set_editor_status("大毛球放置失败")
+				return
+		EDITOR_BRUSH_CHAIN, EDITOR_BRUSH_ICE:
+			_set_terrain(cell, TERRAIN_NORMAL)
+			if board[cell.y][cell.x].is_empty():
+				board[cell.y][cell.x] = _create_tile(cell.x, cell.y, false)
+			if not _can_hold_overlay_obstacle(cell):
+				_set_editor_status("锁链/冰块只能覆盖普通毛球")
+				return
+			board[cell.y][cell.x]["obstacle"] = TILE_OBSTACLE_CHAIN if editor_brush == EDITOR_BRUSH_CHAIN else TILE_OBSTACLE_ICE
 		_:
 			_set_terrain(cell, TERRAIN_NORMAL)
-			if board[cell.y][cell.x].is_empty() or int(board[cell.y][cell.x].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
-				board[cell.y][cell.x] = _create_tile(cell.x, cell.y, false, false)
-	_update_tile_node(cell)
+			if board[cell.y][cell.x].is_empty() or int(board[cell.y][cell.x].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER or _is_big_fuzz_tile(board[cell.y][cell.x]):
+				_clear_tile_occupant(cell)
+				board[cell.y][cell.x] = _create_tile(cell.x, cell.y, false)
+			else:
+				board[cell.y][cell.x].erase("obstacle")
+	for changed in _cells_around(cell, 2):
+		if _in_board(changed):
+			_update_tile_node(changed)
 	_refresh_editor_grid()
 	_update_hud()
+
+
+func _clear_tile_occupant(cell: Vector2i) -> void:
+	if not _in_board(cell):
+		return
+	if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)):
+		for big_cell in _big_cells_for_cell(cell):
+			board[big_cell.y][big_cell.x] = {}
+			_update_tile_node(big_cell)
+	else:
+		board[cell.y][cell.x] = {}
+		_update_tile_node(cell)
+
+
+func _cells_around(center: Vector2i, radius: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for y in range(center.y - radius, center.y + radius + 1):
+		for x in range(center.x - radius, center.x + radius + 1):
+			cells.append(Vector2i(x, y))
+	return cells
 
 
 func _editor_begin_paint(cell: Vector2i) -> void:
@@ -1791,9 +2540,149 @@ func _make_blocker_tile(hp: int) -> Dictionary:
 	return {
 		"color": _random_color_from_pool(),
 		"kind": TileKind.BLOCKER,
-		"hp": clamp(hp, 1, 2),
+		"hp": clamp(hp, 1, 3),
 		"id": Time.get_ticks_usec() + rng.randi()
 	}
+
+
+func _make_big_fuzz_tile(color: int, big_id: int, anchor: Vector2i, part: Vector2i) -> Dictionary:
+	return {
+		"color": color,
+		"kind": TileKind.BIG_FUZZ,
+		"hp": 0,
+		"id": Time.get_ticks_usec() + rng.randi(),
+		"big_id": big_id,
+		"big_anchor": _cell_key(anchor),
+		"big_part": [part.x, part.y]
+	}
+
+
+func _place_big_fuzz(anchor: Vector2i, color: int = -1) -> bool:
+	if not _can_place_big_fuzz(anchor):
+		return false
+	var big_id := Time.get_ticks_usec() + rng.randi()
+	var chosen_color := color if color >= 0 else _random_color_from_pool()
+	for dy in 2:
+		for dx in 2:
+			var cell := anchor + Vector2i(dx, dy)
+			board[cell.y][cell.x] = _make_big_fuzz_tile(chosen_color, big_id, anchor, Vector2i(dx, dy))
+			_update_tile_node(cell)
+	return true
+
+
+func _can_place_big_fuzz(anchor: Vector2i) -> bool:
+	for dy in 2:
+		for dx in 2:
+			var cell := anchor + Vector2i(dx, dy)
+			if not _in_board(cell) or not _terrain_allows_tile(cell):
+				return false
+	return true
+
+
+func _is_big_fuzz_tile(tile: Dictionary) -> bool:
+	return not tile.is_empty() and int(tile.get("kind", TileKind.NORMAL)) == TileKind.BIG_FUZZ
+
+
+func _big_anchor_cell(tile: Dictionary) -> Vector2i:
+	return _cell_from_key(String(tile.get("big_anchor", "")))
+
+
+func _big_part_cell(tile: Dictionary) -> Vector2i:
+	var part: Variant = tile.get("big_part", [0, 0])
+	if part is Array and part.size() >= 2:
+		return Vector2i(int(part[0]), int(part[1]))
+	return Vector2i.ZERO
+
+
+func _is_big_anchor_cell(cell: Vector2i) -> bool:
+	if not _valid_cell(cell):
+		return false
+	var tile: Dictionary = _tile(cell)
+	return _is_big_fuzz_tile(tile) and _big_anchor_cell(tile) == cell
+
+
+func _is_hidden_big_part(cell: Vector2i) -> bool:
+	return _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)) and not _is_big_anchor_cell(cell)
+
+
+func _big_cells_for_tile(tile: Dictionary) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	if not _is_big_fuzz_tile(tile):
+		return cells
+	var anchor := _big_anchor_cell(tile)
+	for dy in 2:
+		for dx in 2:
+			var cell := anchor + Vector2i(dx, dy)
+			if _valid_cell(cell):
+				var part_tile: Dictionary = _tile(cell)
+				if _is_big_fuzz_tile(part_tile) and int(part_tile.get("big_id", -1)) == int(tile.get("big_id", -2)):
+					cells.append(cell)
+	return cells
+
+
+func _big_cells_for_cell(cell: Vector2i) -> Array[Vector2i]:
+	if not _valid_cell(cell):
+		return []
+	return _big_cells_for_tile(_tile(cell))
+
+
+func _representative_cell(cell: Vector2i) -> Vector2i:
+	if not _valid_cell(cell):
+		return cell
+	var tile: Dictionary = _tile(cell)
+	if _is_big_fuzz_tile(tile):
+		return _big_anchor_cell(tile)
+	return cell
+
+
+func _is_same_big_fuzz(a: Vector2i, b: Vector2i) -> bool:
+	if not _valid_cell(a) or not _valid_cell(b):
+		return false
+	var tile_a: Dictionary = _tile(a)
+	var tile_b: Dictionary = _tile(b)
+	return _is_big_fuzz_tile(tile_a) and _is_big_fuzz_tile(tile_b) and int(tile_a.get("big_id", -1)) == int(tile_b.get("big_id", -2))
+
+
+func _can_represent_single_for_match(cell: Vector2i) -> bool:
+	if not _valid_cell(cell):
+		return false
+	var tile: Dictionary = _tile(cell)
+	if int(tile.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+		return false
+	if _is_board_booster_tile(tile):
+		return false
+	if _is_big_fuzz_tile(tile):
+		return _is_big_anchor_cell(cell)
+	return true
+
+
+func _clear_big_fuzz_at(cell: Vector2i, into: Dictionary) -> void:
+	for big_cell in _big_cells_for_cell(cell):
+		into[big_cell] = true
+
+
+func _arrow_kind_for_direction(direction: String) -> int:
+	return TileKind.ROW_CLEAR if direction == BOOSTER_ARROW_LEFT or direction == BOOSTER_ARROW_RIGHT else TileKind.COLUMN_CLEAR
+
+
+func _drag_direction(axis: String, steps: int) -> String:
+	if axis == "row":
+		return BOOSTER_ARROW_RIGHT if steps > 0 else BOOSTER_ARROW_LEFT
+	return BOOSTER_ARROW_DOWN if steps > 0 else BOOSTER_ARROW_UP
+
+
+func _direction_vector(direction: String) -> Vector2i:
+	match direction:
+		BOOSTER_ARROW_LEFT:
+			return Vector2i.LEFT
+		BOOSTER_ARROW_RIGHT:
+			return Vector2i.RIGHT
+		BOOSTER_ARROW_UP:
+			return Vector2i.UP
+		BOOSTER_ARROW_DOWN:
+			return Vector2i.DOWN
+		_:
+			return Vector2i.ZERO
 
 
 func _set_terrain(cell: Vector2i, value: int) -> void:
@@ -1821,9 +2710,18 @@ func _refresh_editor_grid() -> void:
 			if not _terrain_allows_tile(cell):
 				text = "×"
 				accent = Color("#9a8f85")
+			elif not board[row][col].is_empty() and _is_big_fuzz_tile(board[row][col]):
+				text = "大" if _is_big_anchor_cell(cell) else "•"
+				accent = COLORS[int(board[row][col].get("color", goal_color))]
 			elif not board[row][col].is_empty() and int(board[row][col].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
 				text = "箱%d" % int(board[row][col].get("hp", 2))
 				accent = Color("#c17842")
+			elif not board[row][col].is_empty() and _tile_obstacle(board[row][col]) == TILE_OBSTACLE_CHAIN:
+				text = "锁"
+				accent = Color("#a8adbb")
+			elif not board[row][col].is_empty() and _tile_obstacle(board[row][col]) == TILE_OBSTACLE_ICE:
+				text = "冰"
+				accent = Color("#8be8ff")
 			else:
 				text = ""
 				accent = Color("#ffdc7d")
@@ -1853,6 +2751,14 @@ func _editor_brush_name(brush: String) -> String:
 			return "木箱耐久1"
 		EDITOR_BRUSH_CRATE_2:
 			return "木箱耐久2"
+		EDITOR_BRUSH_CRATE_3:
+			return "木箱耐久3"
+		EDITOR_BRUSH_BIG_FUZZ:
+			return "2x2大毛球"
+		EDITOR_BRUSH_CHAIN:
+			return "锁链"
+		EDITOR_BRUSH_ICE:
+			return "冰块"
 		_:
 			return "普通格"
 
@@ -1873,7 +2779,7 @@ func _editor_new_level() -> void:
 		var line := []
 		var node_line: Array = []
 		for col in BOARD_COLS:
-			var tile := _create_tile(col, row, false, false)
+			var tile := _create_tile(col, row, false)
 			line.append(tile)
 			var node := _make_tile_node(tile)
 			board_layer.add_child(node)
@@ -2242,6 +3148,8 @@ func _apply_editor_properties_to_runtime() -> void:
 	high_score = max(0, int(editor_score_spin.value))
 	goal_target = max(0, int(editor_goal_spin.value))
 	blocker_target = max(0, int(editor_blocker_spin.value))
+	chain_target = max(0, int(editor_chain_spin.value)) if is_instance_valid(editor_chain_spin) else chain_target
+	ice_target = max(0, int(editor_ice_spin.value)) if is_instance_valid(editor_ice_spin) else ice_target
 	moves = max(1, int(editor_moves_spin.value))
 	_update_hud()
 
@@ -2257,13 +3165,32 @@ func _editor_color_pool() -> Array[int]:
 func _build_level_config_from_editor() -> Dictionary:
 	var disabled_cells: Array = []
 	var blockers := {}
+	var chains: Array = []
+	var ice: Array = []
+	var big_fuzzies: Array = []
+	var saved_big_ids := {}
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, row)
 			if not _terrain_allows_tile(cell):
 				disabled_cells.append([col, row])
+			elif not board[row][col].is_empty() and _is_big_fuzz_tile(board[row][col]):
+				var tile: Dictionary = board[row][col]
+				var big_id: int = int(tile.get("big_id", 0))
+				if _is_big_anchor_cell(cell) and not saved_big_ids.has(big_id):
+					saved_big_ids[big_id] = true
+					big_fuzzies.append({
+						"anchor": [cell.x, cell.y],
+						"color": int(tile.get("color", goal_color))
+					})
 			elif not board[row][col].is_empty() and int(board[row][col].get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
-				blockers[_cell_key(cell)] = clamp(int(board[row][col].get("hp", 2)), 1, 2)
+				blockers[_cell_key(cell)] = clamp(int(board[row][col].get("hp", 2)), 1, 3)
+			elif not board[row][col].is_empty():
+				var obstacle := _tile_obstacle(board[row][col])
+				if obstacle == TILE_OBSTACLE_CHAIN:
+					chains.append([col, row])
+				elif obstacle == TILE_OBSTACLE_ICE:
+					ice.append([col, row])
 	var level_name := editor_level_name_edit.text.strip_edges() if is_instance_valid(editor_level_name_edit) else editor_selected_level_name
 	if level_name.is_empty():
 		level_name = "未命名关卡"
@@ -2280,8 +3207,13 @@ func _build_level_config_from_editor() -> Dictionary:
 		"score_target": high_score,
 		"goal_target": goal_target,
 		"blocker_target": blocker_target,
+		"chain_target": chain_target,
+		"ice_target": ice_target,
 		"disabled_cells": disabled_cells,
-		"blockers": blockers
+		"blockers": blockers,
+		"chains": chains,
+		"ice": ice,
+		"big_fuzzies": big_fuzzies
 	}
 
 
@@ -2458,6 +3390,12 @@ func _make_overlay_button(text: String, pos: Vector2, callback: Callable) -> But
 func _clear_overlay() -> void:
 	for child in overlay_layer.get_children():
 		child.queue_free()
+	_set_overlay_blocking(false)
+
+
+func _set_overlay_blocking(blocking: bool) -> void:
+	if is_instance_valid(overlay_layer):
+		overlay_layer.mouse_filter = Control.MOUSE_FILTER_STOP if blocking else Control.MOUSE_FILTER_IGNORE
 
 
 func _arm_powerup(powerup: String) -> void:
@@ -2522,11 +3460,214 @@ func _use_armed_powerup(cell: Vector2i) -> void:
 	_update_hud()
 
 
-func _create_tile(col: int, row: int, avoid_refill_cluster: bool = false, allow_random_blocker: bool = true) -> Dictionary:
+func _is_board_booster(cell: Vector2i) -> bool:
+	if not _valid_cell(cell):
+		return false
+	var kind: int = int(_tile(cell).get("kind", TileKind.NORMAL))
+	return kind == TileKind.BOMB or kind == TileKind.ROW_CLEAR or kind == TileKind.COLUMN_CLEAR or kind == TileKind.RAINBOW
+
+
+func _is_board_booster_kind(kind: int) -> bool:
+	return kind == TileKind.BOMB or kind == TileKind.ROW_CLEAR or kind == TileKind.COLUMN_CLEAR or kind == TileKind.RAINBOW
+
+
+func _is_board_booster_tile(tile: Dictionary) -> bool:
+	if tile.is_empty():
+		return false
+	return _is_board_booster_kind(int(tile.get("kind", TileKind.NORMAL)))
+
+
+func _tile_obstacle(tile: Dictionary) -> String:
+	return String(tile.get("obstacle", TILE_OBSTACLE_NONE))
+
+
+func _has_tile_obstacle(tile: Dictionary) -> bool:
+	var obstacle := _tile_obstacle(tile)
+	return obstacle == TILE_OBSTACLE_CHAIN or obstacle == TILE_OBSTACLE_ICE
+
+
+func _has_obstacle(cell: Vector2i, obstacle: String = "") -> bool:
+	if not _valid_cell(cell):
+		return false
+	var tile_obstacle := _tile_obstacle(_tile(cell))
+	if obstacle.is_empty():
+		return tile_obstacle == TILE_OBSTACLE_CHAIN or tile_obstacle == TILE_OBSTACLE_ICE
+	return tile_obstacle == obstacle
+
+
+func _can_hold_overlay_obstacle(cell: Vector2i) -> bool:
+	if not _valid_cell(cell):
+		return false
+	var tile: Dictionary = _tile(cell)
+	return int(tile.get("kind", TileKind.NORMAL)) == TileKind.NORMAL and not _has_tile_obstacle(tile)
+
+
+func _clear_overlay_obstacle(cell: Vector2i) -> String:
+	if not _valid_cell(cell):
+		return TILE_OBSTACLE_NONE
+	var tile: Dictionary = _tile(cell)
+	var obstacle := _tile_obstacle(tile)
+	if obstacle == TILE_OBSTACLE_CHAIN:
+		chain_cleared = min(chain_target, chain_cleared + 1)
+	elif obstacle == TILE_OBSTACLE_ICE:
+		ice_cleared = min(ice_target, ice_cleared + 1)
+	if not obstacle.is_empty():
+		tile.erase("obstacle")
+		tile.erase("force_clear")
+	return obstacle
+
+
+func _line_has_chain_obstacle(axis: String, index: int) -> bool:
+	if axis == "row":
+		for col in BOARD_COLS:
+			if _has_obstacle(Vector2i(col, index), TILE_OBSTACLE_CHAIN):
+				return true
+	else:
+		for row in BOARD_ROWS:
+			if _has_obstacle(Vector2i(index, row), TILE_OBSTACLE_CHAIN):
+				return true
+	return false
+
+
+func _is_matchable_color_tile(cell: Vector2i) -> bool:
+	if not _valid_cell(cell):
+		return false
+	var kind: int = int(_tile(cell).get("kind", TileKind.NORMAL))
+	return kind == TileKind.NORMAL or kind == TileKind.BIG_FUZZ
+
+
+func _activate_board_booster(cell: Vector2i) -> void:
+	if not _is_board_booster(cell) or moves <= 0:
+		return
+	busy = true
+	moves = max(0, moves - 1)
+	combo = 0
+	var cells := _resolve_booster_chain([cell])
+	await _resolve_cells(cells, false)
+
+
+func _resolve_booster_chain(seed_boosters: Array[Vector2i]) -> Array[Vector2i]:
+	var pending: Array[Vector2i] = []
+	for booster in seed_boosters:
+		if _is_board_booster(booster) and not pending.has(booster):
+			pending.append(booster)
+	var hits: Array[Vector2i] = []
+	var triggered := {}
+	while not pending.is_empty():
+		var cell: Vector2i = pending.pop_front()
+		if not _is_board_booster(cell) or triggered.has(cell):
+			continue
+		triggered[cell] = true
+		hits.append(cell)
+		var tile: Dictionary = _tile(cell)
+		var effect_cells: Array[Vector2i] = []
+		match int(tile.get("kind", TileKind.NORMAL)):
+			TileKind.BOMB:
+				effect_cells = _cells_in_square(cell, 1)
+				_flash_status("炸弹爆破！")
+			TileKind.ROW_CLEAR, TileKind.COLUMN_CLEAR:
+				effect_cells = _cells_in_arrow_line(cell, String(tile.get("direction", BOOSTER_ARROW_RIGHT)))
+				_flash_status("箭头扫除！")
+			TileKind.RAINBOW:
+				effect_cells = _rainbow_attack_cells(cell)
+				_flash_status("彩虹攻击！")
+		effect_cells = _expand_big_fuzz_targets(effect_cells)
+		for target in effect_cells:
+			if not _valid_cell(target):
+				continue
+			if _is_board_booster(target):
+				if not triggered.has(target) and not pending.has(target):
+					pending.append(target)
+				if not hits.has(target):
+					hits.append(target)
+				continue
+			hits.append(target)
+	return hits
+
+
+func _expand_big_fuzz_targets(cells: Array[Vector2i]) -> Array[Vector2i]:
+	var lookup := {}
+	for cell in cells:
+		if not _valid_cell(cell):
+			continue
+		if _is_big_fuzz_tile(_tile(cell)):
+			for big_cell in _big_cells_for_cell(cell):
+				lookup[big_cell] = true
+		else:
+			lookup[cell] = true
+	var result: Array[Vector2i] = []
+	for key in lookup.keys():
+		result.append(key)
+	return result
+
+
+func _cells_in_square(center: Vector2i, radius: int) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for y in range(center.y - radius, center.y + radius + 1):
+		for x in range(center.x - radius, center.x + radius + 1):
+			var cell := Vector2i(x, y)
+			if _valid_cell(cell):
+				cells.append(cell)
+	return cells
+
+
+func _cells_in_arrow_line(origin: Vector2i, direction: String) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var step := _direction_vector(direction)
+	if step == Vector2i.ZERO:
+		return cells
+	var cell := origin + step
+	while _in_board(cell):
+		if _valid_cell(cell):
+			cells.append(cell)
+		cell += step
+	return cells
+
+
+func _rainbow_attack_cells(origin: Vector2i) -> Array[Vector2i]:
+	var targets: Array[Vector2i] = []
+	var unique_targets: Array[Vector2i] = []
+	var used := {origin: true}
+	for cell in _priority_cells_for_rainbow():
+		if used.has(cell):
+			continue
+		used[cell] = true
+		unique_targets.append(cell)
+	while targets.size() < 9 and not unique_targets.is_empty():
+		for cell in unique_targets:
+			if targets.size() >= 9:
+				break
+			targets.append(cell)
+	return targets
+
+
+func _priority_cells_for_rainbow() -> Array[Vector2i]:
+	var blockers: Array[Vector2i] = []
+	var big_fuzzies: Array[Vector2i] = []
+	var goals: Array[Vector2i] = []
+	var all_cells: Array[Vector2i] = []
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if not _valid_cell(cell):
+				continue
+			var tile: Dictionary = _tile(cell)
+			all_cells.append(cell)
+			if int(tile.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+				blockers.append(cell)
+			elif _is_big_fuzz_tile(tile) and _is_big_anchor_cell(cell):
+				big_fuzzies.append(cell)
+			elif int(tile.get("color", -1)) == goal_color and int(tile.get("kind", TileKind.NORMAL)) == TileKind.NORMAL:
+				goals.append(cell)
+	blockers.shuffle()
+	big_fuzzies.shuffle()
+	goals.shuffle()
+	all_cells.shuffle()
+	return blockers + big_fuzzies + goals + all_cells
+
+
+func _create_tile(col: int, row: int, avoid_refill_cluster: bool = false) -> Dictionary:
 	var kind := TileKind.NORMAL
-	var roll := rng.randf()
-	if allow_random_blocker and roll < _stage_blocker_rate():
-		kind = TileKind.BLOCKER
 	var color := _random_refill_color(col, row, kind) if avoid_refill_cluster else _random_safe_color(col, row, kind)
 	return {
 		"color": color,
@@ -2603,11 +3744,15 @@ func _filled_same_color_cluster_size(start: Vector2i, color: int, visited: Dicti
 		if cell.y >= board.size() or cell.x >= board[cell.y].size():
 			continue
 		var tile: Dictionary = board[cell.y][cell.x]
-		if tile.is_empty() or int(tile.kind) == TileKind.BLOCKER or int(tile.color) != color:
+		if tile.is_empty() or not _is_matchable_color_tile(cell) or int(tile.get("color", -1)) != color:
+			continue
+		if _is_big_fuzz_tile(tile) and not _is_big_anchor_cell(cell):
 			continue
 		count += 1
+		var representative := _representative_cell(cell)
 		for dir in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP, Vector2i.DOWN]:
-			stack.append(cell + dir)
+			for edge in _match_edge_cells(representative):
+				stack.append(edge + dir)
 	return count
 
 
@@ -2645,6 +3790,11 @@ func _make_tile_node(tile: Dictionary) -> Node2D:
 	badge.visible = false
 	root.add_child(badge)
 
+	var obstacle := Sprite2D.new()
+	obstacle.name = "Obstacle"
+	obstacle.visible = false
+	root.add_child(obstacle)
+
 	var marker := Label.new()
 	marker.name = "Marker"
 	marker.position = Vector2(-18, -20)
@@ -2674,58 +3824,99 @@ func _update_tile_node(cell: Vector2i) -> void:
 		node.visible = false
 		return
 	node.visible = true
+	var tile_color: int = clamp(int(tile.get("color", 0)), 0, textures.size() - 1)
 	var glow: Sprite2D = node.get_node("Glow")
-	glow.texture = textures[int(tile.color)]
+	glow.texture = textures[tile_color]
+	glow.position = Vector2.ZERO
+	glow.scale = Vector2(1.08, 1.08)
 	glow.modulate = Color(1, 1, 1, 0.0)
 	var sprite: Sprite2D = node.get_node("Sprite")
-	sprite.texture = textures[int(tile.color)]
+	sprite.texture = textures[tile_color]
+	sprite.position = Vector2.ZERO
+	sprite.rotation = 0.0
 	sprite.modulate = Color.WHITE
 	sprite.scale = Vector2(0.88, 0.88)
 	var shadow: Sprite2D = node.get_node("Shadow")
-	shadow.texture = textures[int(tile.color)]
+	shadow.texture = textures[tile_color]
 	shadow.position = Vector2(0, 4)
+	shadow.rotation = 0.0
 	shadow.scale = Vector2(0.90, 0.84)
 	shadow.modulate = Color(0.28, 0.15, 0.12, 0.24)
 	var marker: Label = node.get_node("Marker")
 	var badge: Sprite2D = node.get_node("Badge")
 	var ring: Sprite2D = node.get_node("Ring")
+	var obstacle_sprite: Sprite2D = node.get_node("Obstacle")
 	badge.visible = false
+	badge.position = Vector2.ZERO
+	badge.rotation = 0.0
 	ring.visible = false
+	ring.position = Vector2.ZERO
+	ring.rotation = 0.0
+	obstacle_sprite.visible = false
+	obstacle_sprite.position = Vector2.ZERO
+	obstacle_sprite.rotation = 0.0
+	obstacle_sprite.modulate = Color.WHITE
 	match int(tile.kind):
 		TileKind.BOMB:
-			marker.text = "*"
-			sprite.scale = Vector2(1.0, 1.0)
-			glow.modulate = Color(1.0, 0.58, 0.16, 0.5)
+			marker.text = ""
+			sprite.texture = special_textures.get("bomb", textures[tile_color])
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.16)
+			shadow.texture = sprite.texture
+			shadow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.12)
+			glow.texture = sprite.texture
+			glow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.26)
+			glow.modulate = Color(1.0, 0.58, 0.16, 0.38)
 			badge.texture = badge_textures[TileKind.BOMB]
-			badge.visible = true
+			badge.visible = false
 			ring.texture = badge_textures[TileKind.BOMB]
 			ring.scale = Vector2(1.85, 1.85)
 			ring.modulate = Color(1.0, 0.42, 0.2, 0.35)
 			ring.visible = true
 		TileKind.ROW_CLEAR:
-			marker.text = ">"
+			var direction := String(tile.get("direction", BOOSTER_ARROW_RIGHT))
+			marker.text = ""
+			sprite.texture = special_textures.get("arrow", textures[tile_color])
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.22)
+			sprite.rotation = PI if direction == BOOSTER_ARROW_LEFT else 0.0
+			shadow.texture = sprite.texture
+			shadow.scale = sprite.scale
+			glow.texture = sprite.texture
+			glow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.34)
 			glow.modulate = Color(0.35, 0.9, 1.0, 0.35)
 			badge.texture = badge_textures[TileKind.ROW_CLEAR]
-			badge.visible = true
+			badge.visible = false
 			ring.texture = badge_textures[TileKind.ROW_CLEAR]
 			ring.scale = Vector2(1.7, 1.7)
 			ring.modulate = Color(0.35, 0.95, 1.0, 0.28)
 			ring.visible = true
 		TileKind.COLUMN_CLEAR:
-			marker.text = "v"
+			var direction := String(tile.get("direction", BOOSTER_ARROW_DOWN))
+			marker.text = ""
+			sprite.texture = special_textures.get("arrow", textures[tile_color])
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.22)
+			sprite.rotation = -PI * 0.5 if direction == BOOSTER_ARROW_UP else PI * 0.5
+			shadow.texture = sprite.texture
+			shadow.scale = sprite.scale
+			glow.texture = sprite.texture
+			glow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.34)
 			glow.modulate = Color(0.35, 0.9, 1.0, 0.35)
 			badge.texture = badge_textures[TileKind.COLUMN_CLEAR]
-			badge.visible = true
+			badge.visible = false
 			ring.texture = badge_textures[TileKind.COLUMN_CLEAR]
 			ring.scale = Vector2(1.7, 1.7)
 			ring.modulate = Color(0.35, 0.95, 1.0, 0.28)
 			ring.visible = true
 		TileKind.RAINBOW:
-			marker.text = "+"
-			sprite.modulate = Color("#fff7a8")
+			marker.text = ""
+			sprite.texture = special_textures.get("rainbow", textures[tile_color])
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.18)
+			shadow.texture = sprite.texture
+			shadow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.14)
+			glow.texture = sprite.texture
+			glow.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 1.32)
 			glow.modulate = Color(1.0, 0.95, 0.3, 0.55)
 			badge.texture = badge_textures[TileKind.RAINBOW]
-			badge.visible = true
+			badge.visible = false
 			ring.texture = badge_textures[TileKind.RAINBOW]
 			ring.scale = Vector2(1.82, 1.82)
 			ring.modulate = Color(1.0, 0.95, 0.25, 0.36)
@@ -2733,21 +3924,73 @@ func _update_tile_node(cell: Vector2i) -> void:
 		TileKind.BLOCKER:
 			var blocker_hp: int = int(tile.get("hp", 2))
 			marker.text = ""
-			sprite.texture = blocker_textures["full"] if blocker_hp > 1 else blocker_textures["damaged"]
+			sprite.texture = _blocker_texture_for_hp(blocker_hp)
 			sprite.modulate = Color.WHITE
-			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.88)
+			sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.96)
 			shadow.texture = sprite.texture
-			shadow.scale = _texture_fit_scale(shadow.texture, TILE_SIZE * 0.90)
+			shadow.scale = _texture_fit_scale(shadow.texture, TILE_SIZE * 0.98)
 			shadow.modulate = Color(0.30, 0.16, 0.08, 0.28)
 			glow.texture = sprite.texture
 			glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.02)
 			glow.modulate = Color(1.0, 0.55, 0.24, 0.28)
 			ring.texture = badge_textures[TileKind.BLOCKER]
 			ring.scale = Vector2(1.9, 1.9)
-			ring.modulate = Color(1.0, 0.48, 0.18, 0.28) if blocker_hp > 1 else Color(1.0, 0.16, 0.10, 0.35)
+			ring.modulate = Color(1.0, 0.48, 0.18, 0.24) if blocker_hp > 1 else Color(1.0, 0.16, 0.10, 0.35)
+			ring.visible = true
+		TileKind.BIG_FUZZ:
+			var part := _big_part_cell(tile)
+			if part != Vector2i.ZERO:
+				node.visible = false
+				marker.text = ""
+				return
+			marker.text = ""
+			sprite.texture = _large_fuzzy_texture_for_color(tile_color)
+			sprite.scale = _texture_fit_scale(sprite.texture, (TILE_SIZE + TILE_GAP) * 2.08)
+			sprite.position = Vector2((TILE_SIZE + TILE_GAP) * 0.5, (TILE_SIZE + TILE_GAP) * 0.5)
+			sprite.modulate = Color.WHITE
+			shadow.texture = sprite.texture
+			shadow.position = sprite.position + Vector2(0, 7)
+			shadow.scale = _texture_fit_scale(sprite.texture, (TILE_SIZE + TILE_GAP) * 2.12)
+			glow.texture = sprite.texture
+			glow.position = sprite.position
+			glow.scale = _texture_fit_scale(sprite.texture, (TILE_SIZE + TILE_GAP) * 2.22)
+			glow.modulate = Color(1.0, 0.95, 0.45, 0.18)
+			ring.texture = badge_textures[TileKind.RAINBOW]
+			ring.position = sprite.position
+			ring.scale = Vector2(3.15, 3.15)
+			ring.modulate = COLORS[tile_color].lightened(0.35)
+			ring.modulate.a = 0.28
 			ring.visible = true
 		_:
 			marker.text = ""
+	_apply_obstacle_visual(tile, obstacle_sprite)
+
+
+func _large_fuzzy_texture_for_color(color_index: int) -> Texture2D:
+	var color_textures: Array = special_textures.get("large_fuzzy_colors", [])
+	if color_index >= 0 and color_index < color_textures.size() and color_textures[color_index] != null:
+		return color_textures[color_index]
+	return textures[clamp(color_index, 0, textures.size() - 1)]
+
+
+func _blocker_texture_for_hp(hp: int) -> Texture2D:
+	if hp >= 3 and blocker_textures.get("heavy", null) != null:
+		return blocker_textures["heavy"]
+	if hp >= 2 and blocker_textures.get("full", null) != null:
+		return blocker_textures["full"]
+	return blocker_textures.get("damaged", null)
+
+
+func _apply_obstacle_visual(tile: Dictionary, obstacle_sprite: Sprite2D) -> void:
+	var obstacle := _tile_obstacle(tile)
+	if obstacle != TILE_OBSTACLE_CHAIN and obstacle != TILE_OBSTACLE_ICE:
+		obstacle_sprite.visible = false
+		return
+	obstacle_sprite.texture = special_textures.get(obstacle, null)
+	var target_size := TILE_SIZE * (1.58 if obstacle == TILE_OBSTACLE_ICE else 1.48)
+	obstacle_sprite.scale = _texture_fit_scale(obstacle_sprite.texture, target_size)
+	obstacle_sprite.z_index = 6
+	obstacle_sprite.visible = true
 
 
 func _try_pop(cell: Vector2i) -> void:
@@ -2760,8 +4003,6 @@ func _try_pop(cell: Vector2i) -> void:
 		_flash_status("在木箱旁消除就能震裂它")
 		return
 	var group := _collect_group(cell)
-	if target.kind == TileKind.RAINBOW:
-		group = _collect_color(int(target.color))
 	if group.size() < 2 and target.kind == TileKind.NORMAL:
 		_play_sfx("bad")
 		_shake(cell)
@@ -2772,15 +4013,21 @@ func _try_pop(cell: Vector2i) -> void:
 	await _resolve_cells(cells)
 
 
-func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: bool = false) -> void:
+func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: bool = false, reserved_tiles: Dictionary = {}) -> void:
 	busy = true
 	if cells.is_empty():
+		for cell in reserved_tiles.keys():
+			if _valid_cell(cell):
+				board[cell.y][cell.x] = reserved_tiles[cell]
+				_update_tile_node(cell)
 		if not keep_busy:
 			busy = false
 		return
 	var score_before := score
 	var goal_before := goal_collected
 	var blocker_before := blocker_cleared
+	var chain_before := chain_cleared
+	var ice_before := ice_cleared
 	var fever_before := fever
 	var resolved_cells := _resolve_blocker_hits(cells)
 	cells = resolved_cells["clear"]
@@ -2810,16 +4057,36 @@ func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: 
 	else:
 		_play_sfx("pop")
 	score += gained
-	_spawn_score_text(_center_of_cells(cells), "+%d" % gained)
+	if gained > 0:
+		_spawn_score_text(_center_of_cells(cells), "+%d" % gained)
 	if goal_gain > 0:
 		_spawn_goal_collection_trails(goal_cells)
-	_check_milestones(score_before, goal_before, blocker_before, fever_before)
+	_check_milestones(score_before, goal_before, blocker_before, chain_before, ice_before, fever_before)
 	for damaged in resolved_cells["damaged"]:
 		_update_tile_node(damaged)
 		_pulse_tile(damaged)
+		_play_sfx("crate")
 		_spawn_crate_splinters(damaged)
 		_spawn_milestone_text(board_origin + _tile_position(damaged.x, damaged.y), "裂开", Color("#ff7f91"))
+	for peeled in resolved_cells.get("peeled", []):
+		_update_tile_node(peeled)
+		_pulse_tile(peeled)
+		var peeled_kind := String(resolved_cells.get("peeled_obstacles", {}).get(peeled, TILE_OBSTACLE_NONE))
+		_play_sfx("ice" if peeled_kind == TILE_OBSTACLE_ICE else "chain")
+		_spawn_obstacle_shards(peeled, peeled_kind)
+		_spawn_milestone_text(board_origin + _tile_position(peeled.x, peeled.y), "破冰" if peeled_kind == TILE_OBSTACLE_ICE else "解开", Color("#66d8ff") if peeled_kind == TILE_OBSTACLE_ICE else Color("#d9dde8"), 17)
+	for cell in cells:
+		if _valid_cell(cell) and int(_tile(cell).get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+			_play_sfx("crate")
+			_spawn_crate_splinters(cell)
 	await _pop_cells(cells)
+	for cell in reserved_tiles.keys():
+		if _valid_cell(cell):
+			board[cell.y][cell.x] = reserved_tiles[cell]
+			_tile_node(cell).visible = true
+			_tile_node(cell).scale = Vector2.ONE
+			_tile_node(cell).modulate.a = 1.0
+			_update_tile_node(cell)
 	_apply_gravity()
 	_refill_board()
 	await _animate_drop()
@@ -2843,7 +4110,7 @@ func _resolve_cells(cells: Array[Vector2i], spend_move: bool = true, keep_busy: 
 func _count_goal_cells(cells: Array[Vector2i]) -> int:
 	var total := 0
 	for cell in cells:
-		if _valid_cell(cell) and int(_tile(cell).color) == goal_color and int(_tile(cell).kind) != TileKind.BLOCKER:
+		if _is_matchable_color_tile(cell) and int(_tile(cell).get("color", -1)) == goal_color:
 			total += 1
 	return total
 
@@ -2851,32 +4118,39 @@ func _count_goal_cells(cells: Array[Vector2i]) -> int:
 func _goal_cells_in(cells: Array[Vector2i]) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	for cell in cells:
-		if _valid_cell(cell) and int(_tile(cell).color) == goal_color and int(_tile(cell).kind) != TileKind.BLOCKER:
+		if _is_matchable_color_tile(cell) and int(_tile(cell).get("color", -1)) == goal_color:
 			result.append(cell)
 	return result
 
 
 func _collect_group(start: Vector2i) -> Array[Vector2i]:
+	if not _is_matchable_color_tile(start):
+		return []
 	var target: Dictionary = _tile(start)
-	var target_color: int = target.color
+	var target_color: int = int(target.get("color", goal_color))
 	var visited := {}
 	var stack: Array[Vector2i] = [start]
 	var group: Array[Vector2i] = []
 	while not stack.is_empty():
 		var cell: Vector2i = stack.pop_back()
-		if visited.has(cell):
-			continue
-		visited[cell] = true
 		if not _valid_cell(cell):
 			continue
-		var tile: Dictionary = _tile(cell)
-		if tile.kind == TileKind.BLOCKER:
+		var representative := _representative_cell(cell)
+		if visited.has(representative):
 			continue
-		if tile.color != target_color and tile.kind != TileKind.RAINBOW:
+		visited[representative] = true
+		var tile: Dictionary = _tile(cell)
+		if not _is_matchable_color_tile(cell):
+			continue
+		if _is_big_fuzz_tile(tile) and not _is_big_anchor_cell(cell):
+			cell = representative
+			tile = _tile(cell)
+		if int(tile.get("color", -1)) != target_color:
 			continue
 		group.append(cell)
 		for dir in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP, Vector2i.DOWN]:
-			stack.append(cell + dir)
+			for edge in _match_edge_cells(cell):
+				stack.append(edge + dir)
 	return group
 
 
@@ -2884,60 +4158,51 @@ func _collect_color(color_index: int) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
-			if int(board[row][col].color) == color_index and int(board[row][col].kind) != TileKind.BLOCKER:
-				cells.append(Vector2i(col, row))
+			var cell := Vector2i(col, row)
+			if _is_matchable_color_tile(cell) and int(board[row][col].get("color", -1)) == color_index:
+				if _is_big_fuzz_tile(board[row][col]) and not _is_big_anchor_cell(cell):
+					continue
+				cells.append(cell)
 	return cells
 
 
 func _expand_specials(seed_cells: Array[Vector2i]) -> Array[Vector2i]:
 	var result := {}
-	var force_clear := {}
 	for cell in seed_cells:
 		result[cell] = true
-	for cell in seed_cells:
-		var tile: Dictionary = _tile(cell)
-		match int(tile.kind):
-			TileKind.BOMB:
-				for y in range(cell.y - 1, cell.y + 2):
-					for x in range(cell.x - 1, cell.x + 2):
-						var near := Vector2i(x, y)
-						if _valid_cell(near):
-							result[near] = true
-							force_clear[near] = true
-			TileKind.ROW_CLEAR:
-				for x in BOARD_COLS:
-					result[Vector2i(x, cell.y)] = true
-					force_clear[Vector2i(x, cell.y)] = true
-			TileKind.COLUMN_CLEAR:
-				for y in BOARD_ROWS:
-					result[Vector2i(cell.x, y)] = true
-					force_clear[Vector2i(cell.x, y)] = true
-			TileKind.RAINBOW:
-				var color: int = int(_tile(cell).color)
-				for same in _collect_color(color):
-					result[same] = true
-					force_clear[same] = true
 	var cells: Array[Vector2i] = []
 	for key in result.keys():
 		cells.append(key)
-		if force_clear.has(key):
-			_tile(key).force_clear = true
 	return cells
 
 
 func _resolve_blocker_hits(cells: Array[Vector2i]) -> Dictionary:
 	var clear_cells: Array[Vector2i] = []
 	var damaged_cells: Array[Vector2i] = []
+	var peeled_cells: Array[Vector2i] = []
+	var peeled_obstacles := {}
 	var hit_blockers := {}
+	var clear_lookup := {}
 	for cell in cells:
 		if not _valid_cell(cell):
 			continue
 		var tile: Dictionary = _tile(cell)
+		if _is_big_fuzz_tile(tile):
+			_clear_big_fuzz_at(cell, clear_lookup)
+			continue
+		if _has_tile_obstacle(tile):
+			var obstacle := _clear_overlay_obstacle(cell)
+			if not obstacle.is_empty():
+				peeled_cells.append(cell)
+				peeled_obstacles[cell] = obstacle
+			continue
 		if int(tile.kind) != TileKind.BLOCKER:
-			clear_cells.append(cell)
+			clear_lookup[cell] = true
 			continue
 		hit_blockers[cell] = true
 		_apply_blocker_hit(cell, tile, clear_cells, damaged_cells)
+	for key in clear_lookup.keys():
+		clear_cells.append(key)
 	for cell in clear_cells.duplicate():
 		for neighbor in _orthogonal_neighbors(cell):
 			if hit_blockers.has(neighbor):
@@ -2947,7 +4212,9 @@ func _resolve_blocker_hits(cells: Array[Vector2i]) -> Dictionary:
 				_apply_blocker_hit(neighbor, _tile(neighbor), clear_cells, damaged_cells)
 	return {
 		"clear": clear_cells,
-		"damaged": damaged_cells
+		"damaged": damaged_cells,
+		"peeled": peeled_cells,
+		"peeled_obstacles": peeled_obstacles
 	}
 
 
@@ -2977,7 +4244,7 @@ func _pop_cells(cells: Array[Vector2i]) -> void:
 	await get_tree().create_timer(0.07).timeout
 	for cell in cells:
 		var node: Node2D = _tile_node(cell)
-		_spawn_pop(cell, int(_tile(cell).color))
+		_spawn_pop(cell, _pop_color_for_tile(_tile(cell)))
 		var tween := create_tween()
 		tween.set_trans(Tween.TRANS_BACK)
 		tween.set_ease(Tween.EASE_IN)
@@ -2992,6 +4259,12 @@ func _pop_cells(cells: Array[Vector2i]) -> void:
 		_tile_node(cell).visible = false
 
 
+func _pop_color_for_tile(tile: Dictionary) -> int:
+	if tile.is_empty() or _is_board_booster_tile(tile):
+		return goal_color
+	return clamp(int(tile.get("color", goal_color)), 0, COLORS.size() - 1)
+
+
 func _play_pop_flash(cells: Array[Vector2i]) -> void:
 	for cell in cells:
 		var node: Node2D = _tile_node(cell)
@@ -3004,23 +4277,56 @@ func _play_pop_flash(cells: Array[Vector2i]) -> void:
 
 
 func _apply_gravity() -> void:
-	for col in BOARD_COLS:
-		var write_row := BOARD_ROWS - 1
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			if not _terrain_allows_tile(Vector2i(col, row)):
+				board[row][col] = {}
+	var moved := true
+	while moved:
+		moved = false
 		for row in range(BOARD_ROWS - 1, -1, -1):
-			var cell := Vector2i(col, row)
-			if not _terrain_allows_tile(cell):
-				write_row = row - 1
-				board[row][col] = {}
-				continue
-			if not board[row][col].is_empty():
-				if write_row != row:
-					board[write_row][col] = board[row][col]
-					_tile_node(Vector2i(col, write_row)).set_meta("fall_from", row)
-					board[row][col] = {}
-				write_row -= 1
-		for row in range(write_row, -1, -1):
-			if _terrain_allows_tile(Vector2i(col, row)):
-				board[row][col] = {}
+			for col in BOARD_COLS:
+				var cell := Vector2i(col, row)
+				if not _valid_cell(cell):
+					continue
+				var tile: Dictionary = _tile(cell)
+				if _is_big_fuzz_tile(tile):
+					if not _is_big_anchor_cell(cell):
+						continue
+					if _can_big_fuzz_fall(cell):
+						_move_big_fuzz(cell, cell + Vector2i.DOWN)
+						moved = true
+				else:
+					var target := cell + Vector2i.DOWN
+					if _terrain_allows_tile(target) and not _valid_cell(target):
+						board[target.y][target.x] = tile
+						_tile_node(target).set_meta("fall_from", row)
+						board[cell.y][cell.x] = {}
+						moved = true
+
+
+func _can_big_fuzz_fall(anchor: Vector2i) -> bool:
+	var below_left := anchor + Vector2i(0, 2)
+	var below_right := anchor + Vector2i(1, 2)
+	for target in [below_left, below_right]:
+		if not _terrain_allows_tile(target):
+			return false
+		if _valid_cell(target) and not _is_same_big_fuzz(anchor, target):
+			return false
+	return true
+
+
+func _move_big_fuzz(old_anchor: Vector2i, new_anchor: Vector2i) -> void:
+	var cells := _big_cells_for_cell(old_anchor)
+	if cells.is_empty():
+		return
+	var original: Dictionary = _tile(old_anchor).duplicate(true)
+	for cell in cells:
+		board[cell.y][cell.x] = {}
+	for dy in 2:
+		for dx in 2:
+			var cell := new_anchor + Vector2i(dx, dy)
+			board[cell.y][cell.x] = _make_big_fuzz_tile(int(original.get("color", goal_color)), int(original.get("big_id", 0)), new_anchor, Vector2i(dx, dy))
 
 
 func _refill_board() -> void:
@@ -3032,13 +4338,56 @@ func _refill_board() -> void:
 				blocked_node.visible = false
 				continue
 			if board[row][col].is_empty():
-				board[row][col] = _create_tile(col, row, true, false)
+				board[row][col] = _create_tile(col, row, true)
 				var node := _tile_node(Vector2i(col, row))
 				node.position = _tile_position(col, -rng.randi_range(2, 7))
 				node.visible = true
 				node.scale = Vector2.ONE
 				node.modulate.a = 1.0
 				_update_tile_node(Vector2i(col, row))
+	_break_refill_created_matches()
+
+
+func _break_refill_created_matches() -> void:
+	for attempt in 8:
+		var matches := _find_matches()
+		if matches.is_empty():
+			return
+		var changed := false
+		for item in matches:
+			if not item is Array:
+				continue
+			var cluster: Array = item
+			var reroll_cells: Array[Vector2i] = []
+			for cell_variant in cluster:
+				var cell: Vector2i = cell_variant
+				if _is_matchable_color_tile(cell) and int(_tile(cell).get("kind", TileKind.NORMAL)) == TileKind.NORMAL and not _has_tile_obstacle(_tile(cell)):
+					reroll_cells.append(cell)
+			reroll_cells.shuffle()
+			for cell in reroll_cells:
+				if _reroll_refill_cell(cell):
+					changed = true
+					break
+		if not changed:
+			return
+
+
+func _reroll_refill_cell(cell: Vector2i) -> bool:
+	if not _is_matchable_color_tile(cell) or _has_tile_obstacle(_tile(cell)):
+		return false
+	var old_color: int = int(_tile(cell).get("color", goal_color))
+	var candidates: Array[int] = []
+	for color in active_color_pool:
+		if color != old_color:
+			candidates.append(color)
+	candidates.shuffle()
+	for color in candidates:
+		_tile(cell).color = color
+		if not _cell_has_match(cell):
+			_update_tile_node(cell)
+			return true
+	_tile(cell).color = old_color
+	return false
 
 
 func _animate_drop() -> void:
@@ -3070,10 +4419,10 @@ func _remix_board() -> void:
 				_tile_node(cell).visible = false
 				continue
 			var previous: Dictionary = board[row][col] if row < board.size() and col < board[row].size() else {}
-			if not previous.is_empty() and int(previous.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
+			if not previous.is_empty() and (int(previous.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER or _is_big_fuzz_tile(previous)):
 				board[row][col] = previous
 			else:
-				board[row][col] = _create_tile(col, row, false, false)
+				board[row][col] = _create_tile(col, row, false)
 			_tile_node(Vector2i(col, row)).position = _tile_position(col, row - BOARD_ROWS)
 			_update_tile_node(Vector2i(col, row))
 	_stabilize_opening_board()
@@ -3084,8 +4433,10 @@ func _preview_shift_origin(cell: Vector2i) -> void:
 	drag_origin = cell
 	drag_axis = ""
 	drag_steps = 0
-	_highlight_shift_line("row", cell.y, Color(1.0, 0.95, 0.35, 0.18))
-	_highlight_shift_line("col", cell.x, Color(0.35, 0.95, 1.0, 0.18))
+	drag_line_span = 2 if _is_big_fuzz_cell(cell) else 1
+	var origin := _drag_line_origin_cell(cell)
+	_highlight_shift_line("row", origin.y, Color(1.0, 0.95, 0.35, 0.18), drag_line_span)
+	_highlight_shift_line("col", origin.x, Color(0.35, 0.95, 1.0, 0.18), drag_line_span)
 	status_label.text = "拖动整行或整列"
 
 
@@ -3096,101 +4447,113 @@ func _update_line_drag_preview(pos: Vector2) -> void:
 			return
 		drag_axis = "row" if abs(delta.x) >= abs(delta.y) else "col"
 		_clear_shift_preview(false)
+		drag_origin = _drag_line_origin_cell(drag_origin)
+		drag_line_span = 2 if _is_big_fuzz_cell(drag_origin) else 1
 	var step_px := (TILE_SIZE + TILE_GAP) * content_scale
 	var raw_step_float: float = (delta.x if drag_axis == "row" else delta.y) / step_px
 	var raw_steps := _steps_from_drag(raw_step_float)
-	var size := BOARD_COLS if drag_axis == "row" else BOARD_ROWS
+	var size := _segment_cycle_size(drag_origin, drag_axis, drag_line_span)
 	drag_steps = _wrap_cycle_steps(raw_steps, size)
 	var offset_amount := (delta.x if drag_axis == "row" else delta.y) / content_scale
-	_apply_shift_preview(drag_origin, drag_axis, offset_amount)
+	var allowed_big_id := int(_tile(drag_origin).get("big_id", -1)) if _is_big_fuzz_cell(drag_origin) else -1
+	var blocked := false
+	for index in _line_indices_for_drag(drag_origin, drag_axis, drag_line_span):
+		if _line_blocked_by_other_big_fuzz(drag_axis, index, allowed_big_id) or _line_has_chain_obstacle(drag_axis, index):
+			blocked = true
+			break
+	if blocked:
+		offset_amount = clamp(offset_amount, -(TILE_SIZE + TILE_GAP) * 0.42, (TILE_SIZE + TILE_GAP) * 0.42)
+	_apply_shift_preview(drag_origin, drag_axis, offset_amount, drag_line_span)
 	var arrow := ("<" if drag_steps < 0 else ">") if drag_axis == "row" else ("^" if drag_steps < 0 else "v")
-	status_label.text = "%s 移动%s %s%d" % [arrow, ("行" if drag_axis == "row" else "列"), ("+" if drag_steps >= 0 else ""), drag_steps]
+	if drag_steps != 0 and blocked:
+		status_label.text = "锁链固定，松手回弹"
+	else:
+		status_label.text = "%s 移动%s %s%d" % [arrow, ("行" if drag_axis == "row" else "列"), ("+" if drag_steps >= 0 else ""), drag_steps]
 
 
-func _apply_shift_preview(origin: Vector2i, axis: String, offset_amount: float) -> void:
-	_clear_shift_preview(false, axis, origin.y if axis == "row" else origin.x)
+func _apply_shift_preview(origin: Vector2i, axis: String, offset_amount: float, span: int = 1) -> void:
+	_clear_shift_preview(false, axis, origin.y if axis == "row" else origin.x, span)
 	preview_axis = axis
 	preview_index = origin.y if axis == "row" else origin.x
-	if axis == "row":
-		for col in BOARD_COLS:
-			var cell := Vector2i(col, origin.y)
-			if not _valid_cell(cell):
-				continue
+	preview_span = span
+	for index in _line_indices_for_drag(origin, axis, span):
+		var line_origin := Vector2i(origin.x, index) if axis == "row" else Vector2i(index, origin.y)
+		var cells := _line_segment_cells(line_origin, axis)
+		if cells.is_empty():
+			continue
+		var first := cells[0]
+		var first_center: float = (_tile_position(first.x, first.y).x if axis == "row" else _tile_position(first.x, first.y).y)
+		for cell in cells:
 			var node := _tile_node(cell)
-			var pos := _tile_position(col, origin.y)
-			pos.x += offset_amount
-			pos.x = _wrap_line_coordinate(pos.x, BOARD_PADDING + TILE_SIZE * 0.5, BOARD_COLS)
+			var pos := _tile_position(cell.x, cell.y)
+			if axis == "row":
+				pos.x += offset_amount
+				pos.x = _wrap_line_coordinate(pos.x, first_center, cells.size())
+				_set_node_drag_glow(node, Color(1.0, 0.95, 0.35, 0.34))
+			else:
+				pos.y += offset_amount
+				pos.y = _wrap_line_coordinate(pos.y, first_center, cells.size())
+				_set_node_drag_glow(node, Color(0.35, 0.95, 1.0, 0.34))
 			node.position = pos
 			node.z_index = 4
-			_set_node_drag_glow(node, Color(1.0, 0.95, 0.35, 0.34))
-	else:
-		for row in BOARD_ROWS:
-			var cell := Vector2i(origin.x, row)
-			if not _valid_cell(cell):
-				continue
-			var node := _tile_node(cell)
-			var pos := _tile_position(origin.x, row)
-			pos.y += offset_amount
-			pos.y = _wrap_line_coordinate(pos.y, BOARD_PADDING + TILE_SIZE * 0.5, BOARD_ROWS)
-			node.position = pos
-			node.z_index = 4
-			_set_node_drag_glow(node, Color(0.35, 0.95, 1.0, 0.34))
 
 
-func _clear_shift_preview(reset_status: bool = true, keep_axis: String = "", keep_index: int = -1) -> void:
+func _clear_shift_preview(reset_status: bool = true, keep_axis: String = "", keep_index: int = -1, keep_span: int = 1) -> void:
 	if not preview_axis.is_empty() and preview_index >= 0:
-		_reset_shift_line(preview_axis, preview_index)
+		_reset_shift_line(preview_axis, preview_index, preview_span)
 	preview_axis = keep_axis
 	preview_index = keep_index
+	preview_span = keep_span
 	if keep_axis.is_empty():
-		_reset_shift_line("row", drag_origin.y)
-		_reset_shift_line("col", drag_origin.x)
+		var origin := _drag_line_origin_cell(drag_origin) if _valid_cell(drag_origin) else drag_origin
+		_reset_shift_line("row", origin.y, drag_line_span)
+		_reset_shift_line("col", origin.x, drag_line_span)
 	if reset_status:
 		status_label.text = ""
 
 
-func _reset_shift_line(axis: String, index: int) -> void:
+func _reset_shift_line(axis: String, index: int, span: int = 1) -> void:
 	if index < 0:
 		return
 	if axis == "row":
-		if index >= BOARD_ROWS:
-			return
-		for col in BOARD_COLS:
-			var cell := Vector2i(col, index)
-			if not _valid_cell(cell):
-				continue
-			var node: Node2D = _tile_node(cell)
-			node.position = _tile_position(col, index)
-			node.z_index = 0
-			_update_tile_node(cell)
+		for row_index in range(index, min(BOARD_ROWS, index + span)):
+			for col in BOARD_COLS:
+				var cell := Vector2i(col, row_index)
+				if not _valid_cell(cell):
+					continue
+				var node: Node2D = _tile_node(cell)
+				node.position = _tile_position(col, row_index)
+				node.z_index = 0
+				_update_tile_node(cell)
 	else:
-		if index >= BOARD_COLS:
-			return
-		for row in BOARD_ROWS:
-			var cell := Vector2i(index, row)
-			if not _valid_cell(cell):
-				continue
-			var node: Node2D = _tile_node(cell)
-			node.position = _tile_position(index, row)
-			node.z_index = 0
-			_update_tile_node(cell)
+		for col_index in range(index, min(BOARD_COLS, index + span)):
+			for row in BOARD_ROWS:
+				var cell := Vector2i(col_index, row)
+				if not _valid_cell(cell):
+					continue
+				var node: Node2D = _tile_node(cell)
+				node.position = _tile_position(col_index, row)
+				node.z_index = 0
+				_update_tile_node(cell)
 
 
-func _highlight_shift_line(axis: String, index: int, color: Color) -> void:
+func _highlight_shift_line(axis: String, index: int, color: Color, span: int = 1) -> void:
 	if axis == "row":
-		for col in BOARD_COLS:
-			if not _valid_cell(Vector2i(col, index)):
-				continue
-			var node := _tile_node(Vector2i(col, index))
-			node.z_index = 2
-			_set_node_drag_glow(node, color)
+		for row_index in range(index, min(BOARD_ROWS, index + span)):
+			for col in BOARD_COLS:
+				if not _valid_cell(Vector2i(col, row_index)):
+					continue
+				var node := _tile_node(Vector2i(col, row_index))
+				node.z_index = 2
+				_set_node_drag_glow(node, color)
 	else:
-		for row in BOARD_ROWS:
-			if not _valid_cell(Vector2i(index, row)):
-				continue
-			var node := _tile_node(Vector2i(index, row))
-			node.z_index = 2
-			_set_node_drag_glow(node, color)
+		for col_index in range(index, min(BOARD_COLS, index + span)):
+			for row in BOARD_ROWS:
+				if not _valid_cell(Vector2i(col_index, row)):
+					continue
+				var node := _tile_node(Vector2i(col_index, row))
+				node.z_index = 2
+				_set_node_drag_glow(node, color)
 
 
 func _set_node_drag_glow(node: Node2D, color: Color) -> void:
@@ -3198,9 +4561,15 @@ func _set_node_drag_glow(node: Node2D, color: Color) -> void:
 	glow.modulate = color
 	var sprite: Sprite2D = node.get_node("Sprite")
 	var tile: Dictionary = node.get_meta("tile", {})
+	if _is_board_booster_tile(tile):
+		return
 	if int(tile.get("kind", TileKind.NORMAL)) == TileKind.BLOCKER:
 		sprite.scale = _texture_fit_scale(sprite.texture, TILE_SIZE * 0.96)
 		glow.scale = _texture_fit_scale(glow.texture, TILE_SIZE * 1.08)
+	elif _is_big_fuzz_tile(tile):
+		if _big_part_cell(tile) == Vector2i.ZERO:
+			sprite.scale = _texture_fit_scale(sprite.texture, (TILE_SIZE + TILE_GAP) * 2.16)
+			glow.scale = _texture_fit_scale(glow.texture, (TILE_SIZE + TILE_GAP) * 2.28)
 	else:
 		sprite.scale = Vector2(0.96, 0.96)
 
@@ -3232,56 +4601,165 @@ func _commit_line_shift(origin: Vector2i, axis: String, steps: int) -> void:
 	if steps == 0:
 		return
 	busy = true
-	var preview_positions := _capture_shift_preview_positions(origin, axis, steps)
-	if axis == "row":
-		_shift_row(origin.y, steps)
-	else:
-		_shift_col(origin.x, steps)
+	origin = _drag_line_origin_cell(origin)
+	var span := 2 if _is_big_fuzz_cell(origin) else 1
+	var allowed_big_id := int(_tile(origin).get("big_id", -1)) if _is_big_fuzz_cell(origin) else -1
+	for index in _line_indices_for_drag(origin, axis, span):
+		if _line_blocked_by_other_big_fuzz(axis, index, allowed_big_id) or _line_has_chain_obstacle(axis, index):
+			await _animate_shift_rebound(origin, axis, _capture_current_line_positions(origin, axis, span), span)
+			busy = false
+			return
+	if span == 1 and _line_has_big_fuzz(axis, origin.y if axis == "row" else origin.x):
+		await _animate_shift_rebound(origin, axis, _capture_current_line_positions(origin, axis, span), span)
+		busy = false
+		return
+	var preview_positions := _capture_shift_preview_positions(origin, axis, steps, span)
+	_shift_line_group(origin, axis, steps, span)
+	if not _big_fuzzies_are_rectangular():
+		_shift_line_group(origin, axis, -steps, span)
+		await _animate_shift_rebound(origin, axis, preview_positions, span)
+		busy = false
+		return
 	if _find_matches().is_empty():
-		if axis == "row":
-			_shift_row(origin.y, -steps)
-		else:
-			_shift_col(origin.x, -steps)
-		await _animate_shift_rebound(origin, axis, preview_positions)
+		_shift_line_group(origin, axis, -steps, span)
+		await _animate_shift_rebound(origin, axis, preview_positions, span)
 		busy = false
 		return
 	moves = max(0, moves - 1)
 	combo = 0
-	_update_shifted_line_nodes(origin, axis)
-	await _animate_shift_snap(origin, axis, preview_positions)
+	_update_shifted_line_nodes(origin, axis, span)
+	await _animate_shift_snap(origin, axis, preview_positions, span)
 	_update_all_tile_nodes()
-	await _resolve_matches_after_shift()
+	await _resolve_matches_after_shift(origin, axis, steps)
 	if not ended:
 		busy = false
 
 
-func _update_shifted_line_nodes(origin: Vector2i, axis: String) -> void:
+func _line_has_big_fuzz(axis: String, index: int) -> bool:
 	if axis == "row":
 		for col in BOARD_COLS:
-			_update_tile_node(Vector2i(col, origin.y))
+			var cell := Vector2i(col, index)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)):
+				return true
 	else:
 		for row in BOARD_ROWS:
-			_update_tile_node(Vector2i(origin.x, row))
+			var cell := Vector2i(index, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)):
+				return true
+	return false
 
 
-func _capture_shift_preview_positions(origin: Vector2i, axis: String, steps: int) -> Dictionary:
-	var positions := {}
+func _is_big_fuzz_cell(cell: Vector2i) -> bool:
+	return _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell))
+
+
+func _drag_line_origin_cell(cell: Vector2i) -> Vector2i:
+	if _is_big_fuzz_cell(cell):
+		return _big_anchor_cell(_tile(cell))
+	return cell
+
+
+func _line_blocked_by_other_big_fuzz(axis: String, index: int, allowed_big_id: int = -1) -> bool:
 	if axis == "row":
-		var cells: Array[Vector2i] = []
 		for col in BOARD_COLS:
+			var cell := Vector2i(col, index)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)) and int(_tile(cell).get("big_id", -2)) != allowed_big_id:
+				return true
+	else:
+		for row in BOARD_ROWS:
+			var cell := Vector2i(index, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)) and int(_tile(cell).get("big_id", -2)) != allowed_big_id:
+				return true
+	return false
+
+
+func _line_indices_for_drag(origin: Vector2i, axis: String, span: int) -> Array[int]:
+	var indices: Array[int] = []
+	if axis == "row":
+		for offset in span:
+			var index := origin.y + offset
+			if index >= 0 and index < BOARD_ROWS:
+				indices.append(index)
+	else:
+		for offset in span:
+			var index := origin.x + offset
+			if index >= 0 and index < BOARD_COLS:
+					indices.append(index)
+	return indices
+
+
+func _line_segment_cells(origin: Vector2i, axis: String) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	if not _valid_cell(origin):
+		return cells
+	if axis == "row":
+		var left := origin.x
+		while left > 0 and _terrain_allows_tile(Vector2i(left - 1, origin.y)):
+			left -= 1
+		var right := origin.x
+		while right < BOARD_COLS - 1 and _terrain_allows_tile(Vector2i(right + 1, origin.y)):
+			right += 1
+		for col in range(left, right + 1):
 			var cell := Vector2i(col, origin.y)
 			if _valid_cell(cell):
 				cells.append(cell)
-		for i in cells.size():
-			var target := cells[i]
-			var source := cells[posmod(i - steps, cells.size())]
-			positions[target] = _tile_node(source).position
 	else:
-		var cells: Array[Vector2i] = []
-		for row in BOARD_ROWS:
+		var top := origin.y
+		while top > 0 and _terrain_allows_tile(Vector2i(origin.x, top - 1)):
+			top -= 1
+		var bottom := origin.y
+		while bottom < BOARD_ROWS - 1 and _terrain_allows_tile(Vector2i(origin.x, bottom + 1)):
+			bottom += 1
+		for row in range(top, bottom + 1):
 			var cell := Vector2i(origin.x, row)
 			if _valid_cell(cell):
 				cells.append(cell)
+	return cells
+
+
+func _drag_segment_cells(origin: Vector2i, axis: String, span: int = 1) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var seen := {}
+	for index in _line_indices_for_drag(origin, axis, span):
+		var line_origin := Vector2i(origin.x, index) if axis == "row" else Vector2i(index, origin.y)
+		for cell in _line_segment_cells(line_origin, axis):
+			if not seen.has(cell):
+				seen[cell] = true
+				result.append(cell)
+	return result
+
+
+func _segment_cycle_size(origin: Vector2i, axis: String, span: int = 1) -> int:
+	var line_count := 0
+	for index in _line_indices_for_drag(origin, axis, span):
+		var line_origin := Vector2i(origin.x, index) if axis == "row" else Vector2i(index, origin.y)
+		line_count = max(line_count, _line_segment_cells(line_origin, axis).size())
+	return line_count
+
+
+func _capture_current_line_positions(origin: Vector2i, axis: String, span: int = 1) -> Dictionary:
+	var positions := {}
+	for cell in _drag_segment_cells(origin, axis, span):
+		positions[cell] = _tile_node(cell).position
+	return positions
+
+
+func _update_shifted_line_nodes(origin: Vector2i, axis: String, span: int = 1) -> void:
+	if axis == "row":
+		for row_index in _line_indices_for_drag(origin, axis, span):
+			for col in BOARD_COLS:
+				_update_tile_node(Vector2i(col, row_index))
+	else:
+		for col_index in _line_indices_for_drag(origin, axis, span):
+			for row in BOARD_ROWS:
+				_update_tile_node(Vector2i(col_index, row))
+
+
+func _capture_shift_preview_positions(origin: Vector2i, axis: String, steps: int, span: int = 1) -> Dictionary:
+	var positions := {}
+	for index in _line_indices_for_drag(origin, axis, span):
+		var line_origin := Vector2i(origin.x, index) if axis == "row" else Vector2i(index, origin.y)
+		var cells := _line_segment_cells(line_origin, axis)
 		for i in cells.size():
 			var target := cells[i]
 			var source := cells[posmod(i - steps, cells.size())]
@@ -3289,80 +4767,68 @@ func _capture_shift_preview_positions(origin: Vector2i, axis: String, steps: int
 	return positions
 
 
-func _animate_shift_snap(origin: Vector2i, axis: String, preview_positions: Dictionary) -> void:
+func _animate_shift_snap(origin: Vector2i, axis: String, preview_positions: Dictionary, span: int = 1) -> void:
 	var tween := create_tween()
 	tween.set_parallel(true)
-	if axis == "row":
-		for col in BOARD_COLS:
-			var cell := Vector2i(col, origin.y)
-			if not _valid_cell(cell):
-				continue
-			var node := _tile_node(cell)
-			node.visible = true
-			node.position = preview_positions.get(cell, _tile_position(col, origin.y))
-			node.z_index = 4
-			_set_node_drag_glow(node, Color(1.0, 0.95, 0.35, 0.34))
-			tween.tween_property(node, "position", _tile_position(col, origin.y), 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	else:
-		for row in BOARD_ROWS:
-			var cell := Vector2i(origin.x, row)
-			if not _valid_cell(cell):
-				continue
-			var node := _tile_node(cell)
-			node.visible = true
-			node.position = preview_positions.get(cell, _tile_position(origin.x, row))
-			node.z_index = 4
-			_set_node_drag_glow(node, Color(0.35, 0.95, 1.0, 0.34))
-			tween.tween_property(node, "position", _tile_position(origin.x, row), 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	for cell in _drag_segment_cells(origin, axis, span):
+		var node := _tile_node(cell)
+		node.visible = not _is_hidden_big_part(cell)
+		node.position = preview_positions.get(cell, _tile_position(cell.x, cell.y))
+		node.z_index = 4
+		_set_node_drag_glow(node, Color(1.0, 0.95, 0.35, 0.34) if axis == "row" else Color(0.35, 0.95, 1.0, 0.34))
+		tween.tween_property(node, "position", _tile_position(cell.x, cell.y), 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await tween.finished
 	_clear_shift_preview(false)
 
 
-func _animate_shift_rebound(origin: Vector2i, axis: String, preview_positions: Dictionary) -> void:
+func _animate_shift_rebound(origin: Vector2i, axis: String, preview_positions: Dictionary, span: int = 1) -> void:
 	var tween := create_tween()
 	tween.set_parallel(true)
-	if axis == "row":
-		for col in BOARD_COLS:
-			var cell := Vector2i(col, origin.y)
-			if not _valid_cell(cell):
-				continue
-			var node := _tile_node(cell)
-			node.visible = true
-			node.position = preview_positions.get(cell, _tile_position(col, origin.y))
-			node.z_index = 4
-			_set_node_drag_glow(node, Color(1.0, 0.55, 0.45, 0.32))
-			tween.tween_property(node, "position", _tile_position(col, origin.y), 0.20).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	else:
-		for row in BOARD_ROWS:
-			var cell := Vector2i(origin.x, row)
-			if not _valid_cell(cell):
-				continue
-			var node := _tile_node(cell)
-			node.visible = true
-			node.position = preview_positions.get(cell, _tile_position(origin.x, row))
-			node.z_index = 4
-			_set_node_drag_glow(node, Color(1.0, 0.55, 0.45, 0.32))
-			tween.tween_property(node, "position", _tile_position(origin.x, row), 0.20).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	for cell in _drag_segment_cells(origin, axis, span):
+		var node := _tile_node(cell)
+		node.visible = not _is_hidden_big_part(cell)
+		node.position = preview_positions.get(cell, _tile_position(cell.x, cell.y))
+		node.z_index = 4
+		_set_node_drag_glow(node, Color(1.0, 0.55, 0.45, 0.32))
+		tween.tween_property(node, "position", _tile_position(cell.x, cell.y), 0.20).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	await tween.finished
 	_clear_shift_preview(false)
 
 
 func _shift_row(row: int, steps: int) -> void:
-	var cells: Array[Vector2i] = []
-	for col in BOARD_COLS:
+	var col := 0
+	while col < BOARD_COLS:
 		var cell := Vector2i(col, row)
 		if _terrain_allows_tile(cell):
-			cells.append(cell)
-	_shift_cells(cells, steps)
+			var segment := _line_segment_cells(cell, "row")
+			_shift_cells(segment, steps)
+			col = segment.back().x + 1 if not segment.is_empty() else col + 1
+		else:
+			col += 1
 
 
 func _shift_col(col: int, steps: int) -> void:
-	var cells: Array[Vector2i] = []
-	for row in BOARD_ROWS:
+	var row := 0
+	while row < BOARD_ROWS:
 		var cell := Vector2i(col, row)
 		if _terrain_allows_tile(cell):
-			cells.append(cell)
-	_shift_cells(cells, steps)
+			var segment := _line_segment_cells(cell, "col")
+			_shift_cells(segment, steps)
+			row = segment.back().y + 1 if not segment.is_empty() else row + 1
+		else:
+			row += 1
+
+
+func _shift_line_group(origin: Vector2i, axis: String, steps: int, span: int = 1) -> void:
+	for index in _line_indices_for_drag(origin, axis, span):
+		var line_origin := Vector2i(origin.x, index) if axis == "row" else Vector2i(index, origin.y)
+		_shift_segment(line_origin, axis, steps)
+	if span > 1:
+		_reanchor_big_fuzzies()
+
+
+func _shift_segment(origin: Vector2i, axis: String, steps: int) -> void:
+	_shift_cells(_line_segment_cells(origin, axis), steps)
 
 
 func _shift_cells(cells: Array[Vector2i], steps: int) -> void:
@@ -3378,7 +4844,69 @@ func _shift_cells(cells: Array[Vector2i], steps: int) -> void:
 		board[target.y][target.x] = shifted[i]
 
 
-func _resolve_matches_after_shift() -> void:
+func _reanchor_big_fuzzies() -> void:
+	var groups := {}
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)):
+				var big_id: int = int(_tile(cell).get("big_id", -1))
+				if not groups.has(big_id):
+					groups[big_id] = []
+				groups[big_id].append(cell)
+	for big_id in groups.keys():
+		var cells: Array = groups[big_id]
+		if cells.is_empty():
+			continue
+		var min_x := BOARD_COLS
+		var min_y := BOARD_ROWS
+		var color := 0
+		for cell_variant in cells:
+			var cell: Vector2i = cell_variant
+			min_x = min(min_x, cell.x)
+			min_y = min(min_y, cell.y)
+			color = int(_tile(cell).get("color", 0))
+		var anchor := Vector2i(min_x, min_y)
+		for cell_variant in cells:
+			var cell: Vector2i = cell_variant
+			var part := cell - anchor
+			board[cell.y][cell.x] = _make_big_fuzz_tile(color, int(big_id), anchor, part)
+
+
+func _big_fuzzies_are_rectangular() -> bool:
+	var groups := {}
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if _valid_cell(cell) and _is_big_fuzz_tile(_tile(cell)):
+				var big_id: int = int(_tile(cell).get("big_id", -1))
+				if not groups.has(big_id):
+					groups[big_id] = []
+				groups[big_id].append(cell)
+	for big_id in groups.keys():
+		var cells: Array = groups[big_id]
+		if cells.size() != 4:
+			return false
+		var min_x := BOARD_COLS
+		var min_y := BOARD_ROWS
+		var lookup := {}
+		for cell_variant in cells:
+			var cell: Vector2i = cell_variant
+			min_x = min(min_x, cell.x)
+			min_y = min(min_y, cell.y)
+			lookup[cell] = true
+		for dy in 2:
+			for dx in 2:
+				if not lookup.has(Vector2i(min_x + dx, min_y + dy)):
+					return false
+	return true
+
+
+func _resolve_matches_after_shift(origin: Vector2i = Vector2i(-1, -1), axis: String = "", steps: int = 0) -> void:
+	var context := {
+		"spawn_cell": _last_moved_cell(origin, axis, steps),
+		"direction": _drag_direction(axis, steps) if not axis.is_empty() and steps != 0 else BOOSTER_ARROW_RIGHT
+	}
 	var matches := _find_matches()
 	last_resolution_chain_count = 0
 	if matches.is_empty():
@@ -3392,30 +4920,95 @@ func _resolve_matches_after_shift() -> void:
 		return
 	while not matches.is_empty():
 		last_resolution_chain_count += 1
-		await _resolve_cells(matches, false, true)
+		await _resolve_match_sets(matches, context if last_resolution_chain_count == 1 else {})
 		if ended:
 			return
 		matches = _find_matches()
+		context = {}
 	board_layer.position = board_origin
 	busy = false
 
 
-func _find_matches() -> Array[Vector2i]:
+func _resolve_match_sets(match_sets: Array, context: Dictionary = {}) -> void:
+	var clear_lookup := {}
+	var reserved_tiles := {}
+	for item in match_sets:
+		if not item is Array:
+			continue
+		var cluster: Array = item
+		var booster_cell := _booster_cell_for_cluster(cluster, context)
+		var booster_tile := _booster_tile_for_cluster(cluster, booster_cell, context)
+		if not booster_tile.is_empty() and _valid_cell(booster_cell):
+			reserved_tiles[booster_cell] = booster_tile
+		for cell_variant in cluster:
+			var cell: Vector2i = cell_variant
+			for clear_cell in _clear_cells_for_match_cell(cell):
+				if reserved_tiles.has(clear_cell) and clear_cell == booster_cell:
+					continue
+				clear_lookup[clear_cell] = true
+	var clear_cells: Array[Vector2i] = []
+	for key in clear_lookup.keys():
+		clear_cells.append(key)
+	await _resolve_cells(clear_cells, false, true, reserved_tiles)
+
+
+func _booster_cell_for_cluster(cluster: Array, context: Dictionary) -> Vector2i:
+	if cluster.is_empty():
+		return Vector2i(-1, -1)
+	var preferred: Vector2i = context.get("spawn_cell", Vector2i(-1, -1))
+	if _valid_cell(preferred):
+		var representative := _representative_cell(preferred)
+		for item in cluster:
+			if item == representative:
+				return representative
+	return _nearest_cell_to_center(cluster)
+
+
+func _booster_tile_for_cluster(cluster: Array, booster_cell: Vector2i, context: Dictionary) -> Dictionary:
+	if cluster.size() < 5 or not _valid_cell(booster_cell):
+		return {}
+	var kind := TileKind.RAINBOW
+	var direction := String(context.get("direction", BOOSTER_ARROW_RIGHT))
+	if cluster.size() == 5:
+		kind = TileKind.BOMB
+	return {
+		"kind": kind,
+		"hp": 0,
+		"id": Time.get_ticks_usec() + rng.randi(),
+		"direction": direction
+	}
+
+
+func _clear_cells_for_match_cell(cell: Vector2i) -> Array[Vector2i]:
+	if not _valid_cell(cell):
+		return []
+	if _is_big_fuzz_tile(_tile(cell)):
+		return _big_cells_for_cell(cell)
+	return [cell]
+
+
+func _last_moved_cell(origin: Vector2i, axis: String, steps: int) -> Vector2i:
+	if not _valid_cell(origin) or axis.is_empty() or steps == 0:
+		return origin
+	origin = _drag_line_origin_cell(origin)
+	if axis == "row":
+		return Vector2i(posmod(origin.x + steps, BOARD_COLS), origin.y)
+	return Vector2i(origin.x, posmod(origin.y + steps, BOARD_ROWS))
+
+
+func _find_matches() -> Array:
 	var visited := {}
-	var found := {}
+	var found: Array = []
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var cell := Vector2i(col, row)
-			if visited.has(cell):
+			var representative := _representative_cell(cell)
+			if visited.has(representative):
 				continue
 			var cluster := _collect_same_color_cluster(cell, visited)
 			if cluster.size() >= 3:
-				for clustered in cluster:
-					found[clustered] = true
-	var cells: Array[Vector2i] = []
-	for key in found.keys():
-		cells.append(key)
-	return _expand_specials(cells)
+				found.append(cluster)
+	return found
 
 
 func _collect_same_color_cluster(start: Vector2i, visited: Dictionary) -> Array[Vector2i]:
@@ -3423,25 +5016,40 @@ func _collect_same_color_cluster(start: Vector2i, visited: Dictionary) -> Array[
 	if not _valid_cell(start):
 		return cluster
 	var start_tile: Dictionary = _tile(start)
-	if int(start_tile.kind) == TileKind.BLOCKER:
-		visited[start] = true
+	if _is_big_fuzz_tile(start_tile) and not _is_big_anchor_cell(start):
+		var anchor := _representative_cell(start)
+		if _valid_cell(anchor) and not visited.has(anchor):
+			return _collect_same_color_cluster(anchor, visited)
 		return cluster
-	var color: int = int(start_tile.color)
+	if int(start_tile.kind) == TileKind.BLOCKER or not _can_represent_single_for_match(start):
+		visited[_representative_cell(start)] = true
+		return cluster
+	var color: int = int(start_tile.get("color", -1))
 	var stack: Array[Vector2i] = [start]
 	while not stack.is_empty():
 		var cell: Vector2i = stack.pop_back()
-		if visited.has(cell):
-			continue
 		if not _valid_cell(cell):
 			continue
+		var representative := _representative_cell(cell)
 		var tile: Dictionary = _tile(cell)
-		if int(tile.kind) == TileKind.BLOCKER or int(tile.color) != color:
+		if _is_big_fuzz_tile(tile) and not _is_big_anchor_cell(cell):
 			continue
-		visited[cell] = true
-		cluster.append(cell)
+		if visited.has(representative):
+			continue
+		if int(tile.get("color", -1)) != color or not _can_represent_single_for_match(cell):
+			continue
+		visited[representative] = true
+		cluster.append(representative)
 		for dir in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.UP, Vector2i.DOWN]:
-			stack.append(cell + dir)
+			for edge in _match_edge_cells(representative):
+				stack.append(edge + dir)
 	return cluster
+
+
+func _match_edge_cells(cell: Vector2i) -> Array[Vector2i]:
+	if not _valid_cell(cell) or not _is_big_fuzz_tile(_tile(cell)):
+		return [cell]
+	return _big_cells_for_cell(cell)
 
 
 func _avoid_opening_dead_board() -> void:
@@ -3464,14 +5072,28 @@ func _clear_opening_matches() -> void:
 		var matches := _find_matches()
 		if matches.is_empty():
 			return
-		for cell in matches:
+		for cell in _flatten_match_sets(matches):
 			_reroll_opening_cell(cell)
 
 
+func _flatten_match_sets(match_sets: Array) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var seen := {}
+	for item in match_sets:
+		if not item is Array:
+			continue
+		for cell_variant in item:
+			var cell: Vector2i = cell_variant
+			if not seen.has(cell):
+				seen[cell] = true
+				result.append(cell)
+	return result
+
+
 func _reroll_opening_cell(cell: Vector2i) -> void:
-	if not _valid_cell(cell) or int(_tile(cell).kind) == TileKind.BLOCKER:
+	if not _is_matchable_color_tile(cell):
 		return
-	var old_color: int = int(_tile(cell).color)
+	var old_color: int = int(_tile(cell).get("color", goal_color))
 	var candidates: Array[int] = []
 	for color in active_color_pool:
 		if color != old_color:
@@ -3485,7 +5107,7 @@ func _reroll_opening_cell(cell: Vector2i) -> void:
 
 
 func _cell_has_match(cell: Vector2i) -> bool:
-	if not _valid_cell(cell) or int(_tile(cell).kind) == TileKind.BLOCKER:
+	if not _is_matchable_color_tile(cell):
 		return false
 	var visited := {}
 	return _collect_same_color_cluster(cell, visited).size() >= 3
@@ -3511,8 +5133,6 @@ func _preview_group(cell: Vector2i) -> void:
 		return
 	var tile: Dictionary = _tile(cell)
 	selected_cells = _collect_group(cell)
-	if tile.kind == TileKind.RAINBOW:
-		selected_cells = _collect_color(int(tile.color))
 	if selected_cells.size() < 2 and tile.kind == TileKind.NORMAL:
 		return
 	for selected in selected_cells:
@@ -3601,6 +5221,7 @@ func _shake(cell: Vector2i) -> void:
 func _end_game() -> void:
 	busy = true
 	ended = true
+	_reset_interaction_state(false)
 	var win := _stage_complete()
 	var verification_mode := _is_verification_mode()
 	if not verification_mode:
@@ -3763,6 +5384,10 @@ func _special_reward_name(kind: int) -> String:
 func _failure_tip() -> String:
 	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return "提示：在木箱旁做消除最快"
+	if _has_chain_objective() and chain_cleared < chain_target:
+		return "提示：锁链所在行列不能拖，先匹配解锁"
+	if _has_ice_objective() and ice_cleared < ice_target:
+		return "提示：冰块能拖动，匹配或特效可破冰"
 	if _has_goal_objective() and goal_collected < goal_target and paint_charges <= 0:
 		return "提示：染色适合留给目标色"
 	if _has_score_objective() and score < high_score:
@@ -3776,6 +5401,10 @@ func _result_body(result_line: String) -> String:
 		lines.append("%s毛球 %d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target])
 	if _has_blocker_objective():
 		lines.append("木箱 %d/%d" % [blocker_cleared, blocker_target])
+	if _has_chain_objective():
+		lines.append("锁链 %d/%d" % [chain_cleared, chain_target])
+	if _has_ice_objective():
+		lines.append("冰块 %d/%d" % [ice_cleared, ice_target])
 	if _has_score_objective():
 		lines.append("分数 %d/%d" % [score, high_score])
 	lines.append(result_line)
@@ -3793,6 +5422,10 @@ func _current_objective_nudge() -> String:
 		return "最后几步，优先做目标色连消。"
 	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return "在木箱旁消除，完成木箱目标。"
+	if _has_chain_objective() and chain_cleared < chain_target:
+		return "匹配锁链毛球，先解除锁定。"
+	if _has_ice_objective() and ice_cleared < ice_target:
+		return "冰块可以拖动，连成同色后破冰。"
 	if _has_goal_objective() and goal_collected >= goal_target:
 		return "目标色已达成，做大连消冲分。"
 	if _has_score_objective() and score >= high_score:
@@ -3809,6 +5442,10 @@ func _objectives_complete() -> bool:
 		return false
 	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		return false
+	if _has_chain_objective() and chain_cleared < chain_target:
+		return false
+	if _has_ice_objective() and ice_cleared < ice_target:
+		return false
 	return true
 
 
@@ -3824,6 +5461,14 @@ func _has_blocker_objective() -> bool:
 	return blocker_target > 0
 
 
+func _has_chain_objective() -> bool:
+	return chain_target > 0
+
+
+func _has_ice_objective() -> bool:
+	return ice_target > 0
+
+
 func _score_objective_complete() -> bool:
 	return not _has_score_objective() or score >= high_score
 
@@ -3834,6 +5479,10 @@ func _active_objective_names() -> Array[String]:
 		names.append("%s毛球" % COLOR_NAMES[goal_color])
 	if _has_blocker_objective():
 		names.append("木箱")
+	if _has_chain_objective():
+		names.append("锁链")
+	if _has_ice_objective():
+		names.append("冰块")
 	if _has_score_objective():
 		names.append("分数")
 	return names
@@ -3847,9 +5496,7 @@ func _active_objective_summary() -> String:
 
 
 func _stage_blocker_target() -> int:
-	if stage < 4:
-		return 0
-	return min(6 + (stage - 4) * 2, 14)
+	return 0
 
 
 func _stage_brief_line() -> String:
@@ -3859,6 +5506,10 @@ func _stage_brief_line() -> String:
 			lines.append("收集 %d 个%s毛球" % [goal_target, COLOR_NAMES[goal_color]])
 		if _has_blocker_objective():
 			lines.append("清除 %d 个木箱" % blocker_target)
+		if _has_chain_objective():
+			lines.append("解除 %d 个锁链" % chain_target)
+		if _has_ice_objective():
+			lines.append("破除 %d 个冰块" % ice_target)
 		if _has_score_objective():
 			lines.append("分数 %d" % high_score)
 		return "\n".join(lines) if not lines.is_empty() else "自由试玩关卡"
@@ -3869,6 +5520,10 @@ func _stage_brief_line() -> String:
 		text += "  分数 %d" % high_score if not text.is_empty() else "分数 %d" % high_score
 	if _has_blocker_objective():
 			text += "\n清除 %d 个木箱" % blocker_target
+	if _has_chain_objective():
+		text += "\n解除 %d 个锁链" % chain_target
+	if _has_ice_objective():
+		text += "\n破除 %d 个冰块" % ice_target
 	return text if not text.is_empty() else "自由试玩关卡"
 
 
@@ -3881,12 +5536,9 @@ func _pause_goal_line() -> String:
 func _stage_rule_line() -> String:
 	if not active_level_config.is_empty():
 		return "自定义关卡：颜色池 %d 色，步数 %d" % [active_color_pool.size(), moves]
-	var blocker_rate := _stage_blocker_rate()
-	if blocker_rate <= 0.0:
-		return "拖动整行整列，连出3个以上同色毛球"
 	if blocker_target > 0:
-		return "木箱任务：木箱被震碎后才计入目标"
-	return "木箱出现率 %.0f%%：在旁边消除可震裂" % (blocker_rate * 100.0)
+		return "木箱任务：木箱只在关卡中预先摆放"
+	return "拖动整行整列，连出3个以上同色毛球"
 
 
 func _stage_mission_line() -> String:
@@ -3894,6 +5546,10 @@ func _stage_mission_line() -> String:
 		return "%s。" % _stage_brief_line().replace("\n", "，")
 	if _has_goal_objective() and _has_blocker_objective():
 		return "收集 %d 个目标毛球，清除 %d 个木箱。" % [goal_target, blocker_target]
+	if _has_chain_objective():
+		return "匹配带锁链的毛球，解除 %d 个锁链。" % chain_target
+	if _has_ice_objective():
+		return "拖动冰块毛球，连色破除 %d 个冰块。" % ice_target
 	if _has_goal_objective():
 		return "拖动整行整列，连出3个以上目标毛球。"
 	if _has_blocker_objective():
@@ -3905,18 +5561,16 @@ func _stage_mission_line() -> String:
 	return "自由试玩，尝试做出大连消。"
 
 
-func _stage_blocker_rate() -> float:
-	if stage < 2:
-		return 0.0
-	return min(0.018 + stage * 0.003, 0.045)
-
-
 func _failure_reason() -> String:
 	var missing: Array[String] = []
 	if _has_goal_objective() and goal_collected < goal_target:
 		missing.append("还差%d个目标" % (goal_target - goal_collected))
 	if _has_blocker_objective() and blocker_cleared < blocker_target:
 		missing.append("还差%d个木箱" % (blocker_target - blocker_cleared))
+	if _has_chain_objective() and chain_cleared < chain_target:
+		missing.append("还差%d个锁链" % (chain_target - chain_cleared))
+	if _has_ice_objective() and ice_cleared < ice_target:
+		missing.append("还差%d个冰块" % (ice_target - ice_cleared))
 	if _has_score_objective() and score < high_score:
 		missing.append("还差%d分" % (high_score - score))
 	if missing.is_empty():
@@ -3931,6 +5585,10 @@ func _hud_goal_text() -> String:
 		return "%s\n%d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target]
 	if _has_blocker_objective():
 		return "木箱\n%d/%d" % [blocker_cleared, blocker_target]
+	if _has_chain_objective():
+		return "锁链\n%d/%d" % [chain_cleared, chain_target]
+	if _has_ice_objective():
+		return "冰块\n%d/%d" % [ice_cleared, ice_target]
 	if _has_score_objective():
 		return "分数\n%d/%d" % [score, high_score]
 	return "目标\n自由"
@@ -3942,6 +5600,10 @@ func _objective_progress_value() -> int:
 		total += goal_collected
 	if _has_blocker_objective():
 		total += blocker_cleared
+	if _has_chain_objective():
+		total += chain_cleared
+	if _has_ice_objective():
+		total += ice_cleared
 	if _has_score_objective():
 		total += min(score, high_score)
 	return total
@@ -3953,6 +5615,10 @@ func _objective_progress_target() -> int:
 		total += goal_target
 	if _has_blocker_objective():
 		total += blocker_target
+	if _has_chain_objective():
+		total += chain_target
+	if _has_ice_objective():
+		total += ice_target
 	if _has_score_objective():
 		total += high_score
 	return max(1, total)
@@ -3964,6 +5630,10 @@ func _objective_progress_text() -> String:
 		parts.append("%s %d/%d" % [COLOR_NAMES[goal_color], goal_collected, goal_target])
 	if _has_blocker_objective():
 		parts.append("木箱 %d/%d" % [blocker_cleared, blocker_target])
+	if _has_chain_objective():
+		parts.append("锁链 %d/%d" % [chain_cleared, chain_target])
+	if _has_ice_objective():
+		parts.append("冰块 %d/%d" % [ice_cleared, ice_target])
 	if _has_score_objective():
 		parts.append("分数 %d/%d" % [score, high_score])
 	return " + ".join(parts) if not parts.is_empty() else "自由试玩"
@@ -4041,6 +5711,18 @@ func _play_sfx(kind: String) -> void:
 		"power":
 			frequency = 820.0
 			duration = 0.12
+		"crate":
+			frequency = 210.0
+			duration = 0.13
+			volume = 0.23
+		"ice":
+			frequency = 1180.0
+			duration = 0.11
+			volume = 0.20
+		"chain":
+			frequency = 760.0
+			duration = 0.16
+			volume = 0.21
 		"win":
 			frequency = 920.0
 			duration = 0.26
@@ -4064,6 +5746,13 @@ func _play_sfx(kind: String) -> void:
 		var wave: float = sin(TAU * frequency * t) * envelope
 		if kind == "mega" or kind == "win":
 			wave += sin(TAU * frequency * 1.5 * t) * envelope * 0.35
+		elif kind == "crate":
+			var noise := sin(float(i * 47 % 97) * 0.37) * 0.32
+			wave = (sin(TAU * frequency * t) * 0.55 + noise) * envelope
+		elif kind == "ice":
+			wave = (sin(TAU * frequency * t) + sin(TAU * frequency * 1.73 * t) * 0.45) * envelope
+		elif kind == "chain":
+			wave = (sin(TAU * frequency * t) + sin(TAU * frequency * 2.08 * t) * 0.62) * envelope
 		playback.push_frame(Vector2(wave, wave))
 
 
@@ -4126,7 +5815,7 @@ func _maybe_goal_assist() -> void:
 	_update_hud()
 
 
-func _check_milestones(score_before: int, goal_before: int, blocker_before: int, fever_before: float) -> void:
+func _check_milestones(score_before: int, goal_before: int, blocker_before: int, chain_before: int, ice_before: int, fever_before: float) -> void:
 	if _has_goal_objective() and not goal_milestone_shown and goal_before < goal_target and goal_collected >= goal_target:
 		goal_milestone_shown = true
 		_spawn_milestone_text(Vector2(224, 652), "目标达成", Color("#2e91b8"), 30)
@@ -4136,6 +5825,16 @@ func _check_milestones(score_before: int, goal_before: int, blocker_before: int,
 		blocker_milestone_shown = true
 		_spawn_milestone_text(Vector2(224, 652), "木箱清除", Color("#ff7f91"), 28)
 		_flash_status("木箱目标完成！")
+		_board_bump()
+	if _has_chain_objective() and not chain_milestone_shown and chain_before < chain_target and chain_cleared >= chain_target:
+		chain_milestone_shown = true
+		_spawn_milestone_text(Vector2(224, 652), "锁链解除", Color("#7f8aa8"), 27)
+		_flash_status("锁链目标完成！")
+		_board_bump()
+	if _has_ice_objective() and not ice_milestone_shown and ice_before < ice_target and ice_cleared >= ice_target:
+		ice_milestone_shown = true
+		_spawn_milestone_text(Vector2(224, 652), "冰块破除", Color("#4ec6ff"), 27)
+		_flash_status("冰块目标完成！")
 		_board_bump()
 	if _has_score_objective() and not score_milestone_shown and score_before < high_score and score >= high_score:
 		score_milestone_shown = true
@@ -4217,6 +5916,29 @@ func _spawn_crate_splinters(cell: Vector2i) -> void:
 		tween.finished.connect(shard.queue_free)
 
 
+func _spawn_obstacle_shards(cell: Vector2i, obstacle: String) -> void:
+	var center: Vector2 = board_origin + _tile_position(cell.x, cell.y)
+	var count := 12 if obstacle == TILE_OBSTACLE_ICE else 10
+	for i in count:
+		var shard := ColorRect.new()
+		var shard_size := Vector2(rng.randf_range(4.0, 8.0), rng.randf_range(2.0, 6.0))
+		if obstacle == TILE_OBSTACLE_ICE:
+			shard.color = Color("#bff6ff") if i % 2 == 0 else Color("#59d9ff")
+			shard_size = Vector2(rng.randf_range(3.0, 7.0), rng.randf_range(3.0, 7.0))
+		else:
+			shard.color = Color("#dfe4ef") if i % 2 == 0 else Color("#6b7080")
+		shard.size = shard_size
+		shard.position = center + Vector2(rng.randf_range(-12, 12), rng.randf_range(-12, 12))
+		shard.rotation = rng.randf_range(-0.8, 0.8)
+		content_root.add_child(shard)
+		var tween := create_tween()
+		tween.tween_property(shard, "position", shard.position + Vector2.from_angle(rng.randf_range(0, TAU)) * rng.randf_range(22, 58), 0.28).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tween.parallel().tween_property(shard, "rotation", shard.rotation + rng.randf_range(-2.4, 2.4), 0.28)
+		tween.parallel().tween_property(shard, "scale", Vector2(0.25, 0.25), 0.28)
+		tween.parallel().tween_property(shard, "modulate:a", 0.0, 0.28)
+		tween.finished.connect(shard.queue_free)
+
+
 func _spawn_goal_collection_trails(cells: Array[Vector2i]) -> void:
 	var cap: int = min(cells.size(), 8)
 	var target := Vector2(318, 128)
@@ -4248,14 +5970,14 @@ func _center_of_cells(cells: Array[Vector2i]) -> Vector2:
 	return sum / max(1, cells.size())
 
 
-func _nearest_cell_to_center(cells: Array[Vector2i]) -> Vector2i:
+func _nearest_cell_to_center(cells: Array) -> Vector2i:
 	if cells.is_empty():
 		return Vector2i(BOARD_COLS / 2, BOARD_ROWS / 2)
 	var center := Vector2.ZERO
 	for cell in cells:
 		center += Vector2(cell.x, cell.y)
 	center /= cells.size()
-	var best := cells[0]
+	var best: Vector2i = cells[0]
 	var best_dist := INF
 	for cell in cells:
 		var dist := Vector2(cell.x, cell.y).distance_squared_to(center)
@@ -4285,7 +6007,11 @@ func _screen_position_for_cell(cell: Vector2i) -> Vector2:
 
 
 func _valid_cell(cell: Vector2i) -> bool:
-	return cell.x >= 0 and cell.x < BOARD_COLS and cell.y >= 0 and cell.y < BOARD_ROWS and not _tile(cell).is_empty()
+	if cell.x < 0 or cell.x >= BOARD_COLS or cell.y < 0 or cell.y >= BOARD_ROWS:
+		return false
+	if cell.y >= board.size() or cell.x >= board[cell.y].size():
+		return false
+	return not _tile(cell).is_empty()
 
 
 func _tile_position(col: int, row: int) -> Vector2:
@@ -4320,8 +6046,25 @@ func _create_textures() -> void:
 	badge_textures[TileKind.COLUMN_CLEAR] = _make_badge_texture(Color("#42e8ff"))
 	badge_textures[TileKind.RAINBOW] = _make_badge_texture(Color("#ffe456"))
 	badge_textures[TileKind.BLOCKER] = _make_badge_texture(Color("#6f6a7a"))
-	blocker_textures["full"] = _load_png_texture(BLOCKER_CRATE_FULL_PATH)
-	blocker_textures["damaged"] = _load_png_texture(BLOCKER_CRATE_DAMAGED_PATH)
+	blocker_textures["heavy"] = _load_png_texture(BLOCKER_CRATE_LEVEL_3_PATH)
+	blocker_textures["full"] = _load_png_texture(BLOCKER_CRATE_LEVEL_2_PATH)
+	blocker_textures["damaged"] = _load_png_texture(BLOCKER_CRATE_LEVEL_1_PATH)
+	if blocker_textures["heavy"] == null:
+		blocker_textures["heavy"] = _make_crate_texture(3)
+	if blocker_textures["full"] == null:
+		blocker_textures["full"] = _make_crate_texture(2)
+	if blocker_textures["damaged"] == null:
+		blocker_textures["damaged"] = _make_crate_texture(1)
+	special_textures["large_fuzzy_colors"] = textures.duplicate()
+	special_textures["arrow"] = _load_png_texture(BOOSTER_ARROW_TEXTURE_PATH)
+	special_textures["bomb"] = _load_png_texture(BOOSTER_BOMB_TEXTURE_PATH)
+	special_textures["rainbow"] = _load_png_texture(BOOSTER_RAINBOW_TEXTURE_PATH)
+	special_textures[TILE_OBSTACLE_CHAIN] = _load_png_texture(OBSTACLE_CHAIN_TEXTURE_PATH)
+	if special_textures[TILE_OBSTACLE_CHAIN] == null:
+		special_textures[TILE_OBSTACLE_CHAIN] = _make_chain_overlay_texture()
+	special_textures[TILE_OBSTACLE_ICE] = _load_png_texture(OBSTACLE_ICE_TEXTURE_PATH)
+	if special_textures[TILE_OBSTACLE_ICE] == null:
+		special_textures[TILE_OBSTACLE_ICE] = _make_ice_overlay_texture()
 	ui_textures["board"] = _load_png_texture(UI_BOARD_FRAME_PATH)
 	ui_textures["popup"] = _load_png_texture(UI_POPUP_PANEL_PATH)
 	ui_textures["progress_yellow"] = _load_png_texture(UI_PROGRESS_YELLOW_PATH)
@@ -4391,6 +6134,100 @@ func _make_badge_texture(base: Color) -> Texture2D:
 			image.set_pixel(x, y, c)
 	image.generate_mipmaps()
 	return ImageTexture.create_from_image(image)
+
+
+func _make_chain_overlay_texture() -> Texture2D:
+	var image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	for offset in [-20, 20]:
+		_draw_chain_band(image, Vector2(10, 28 + offset), Vector2(86, 68 + offset), Color("#5f6470"))
+		_draw_chain_band(image, Vector2(10, 68 + offset), Vector2(86, 28 + offset), Color("#454954"))
+	for center in [Vector2(48, 30), Vector2(48, 66)]:
+		_draw_disc(image, center, 8, Color("#f2f4fb"))
+		_draw_disc(image, center, 5, Color(0, 0, 0, 0))
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
+
+
+func _make_ice_overlay_texture() -> Texture2D:
+	var image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	for y in 96:
+		for x in 96:
+			var p := Vector2(x - 48, y - 48)
+			var dist: float = max(abs(p.x) / 39.0, abs(p.y) / 35.0)
+			if dist > 1.0:
+				continue
+			var edge: float = clamp((dist - 0.72) / 0.28, 0.0, 1.0)
+			var c := Color("#97ecff")
+			c.a = 0.20 + edge * 0.50
+			if p.x + p.y < -34:
+				c = Color(1, 1, 1, 0.44)
+			image.set_pixel(x, y, c)
+	for start in [Vector2(23, 31), Vector2(59, 22), Vector2(30, 66)]:
+		_draw_chain_band(image, start, start + Vector2(16, -8), Color(1, 1, 1, 0.50), 2)
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
+
+
+func _make_crate_texture(hp: int) -> Texture2D:
+	var image := Image.create(96, 96, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	var base := Color("#94572d") if hp >= 3 else Color("#b06736") if hp == 2 else Color("#bd7243")
+	var rim := Color("#523221") if hp >= 3 else Color("#693e24") if hp == 2 else Color("#763a2a")
+	_draw_round_box_to_image(image, Rect2(Vector2(13, 13), Vector2(70, 70)), 8, base, rim, 4)
+	for y in [29, 48, 67]:
+		_draw_line_to_image(image, Vector2(18, y), Vector2(78, y), Color("#6b3e24"), 3)
+	if hp >= 2:
+		_draw_line_to_image(image, Vector2(22, 20), Vector2(74, 76), Color("#774324"), 7)
+		_draw_line_to_image(image, Vector2(74, 20), Vector2(22, 76), Color("#774324"), 7)
+	if hp >= 3:
+		for x in [25, 71]:
+			_draw_line_to_image(image, Vector2(x, 14), Vector2(x, 82), Color("#555962"), 6)
+		for corner in [Vector2(13, 13), Vector2(67, 13), Vector2(13, 67), Vector2(67, 67)]:
+			_draw_round_box_to_image(image, Rect2(corner, Vector2(16, 16)), 4, Color("#5e626b"), Color("#e8ebf0"), 2)
+	if hp <= 1:
+		_draw_line_to_image(image, Vector2(25, 18), Vector2(35, 40), Color("#4b241d"), 4)
+		_draw_line_to_image(image, Vector2(35, 40), Vector2(29, 70), Color("#4b241d"), 4)
+		_draw_line_to_image(image, Vector2(63, 18), Vector2(54, 47), Color("#4b241d"), 4)
+		_draw_line_to_image(image, Vector2(54, 47), Vector2(64, 76), Color("#4b241d"), 4)
+	image.generate_mipmaps()
+	return ImageTexture.create_from_image(image)
+
+
+func _draw_round_box_to_image(image: Image, rect: Rect2, radius: int, fill: Color, border: Color, border_width: int) -> void:
+	for y in range(int(rect.position.y), int(rect.position.y + rect.size.y)):
+		for x in range(int(rect.position.x), int(rect.position.x + rect.size.x)):
+			var p := Vector2(x, y)
+			var inside := true
+			for corner in [
+				Vector2(rect.position.x + radius, rect.position.y + radius),
+				Vector2(rect.position.x + rect.size.x - radius - 1, rect.position.y + radius),
+				Vector2(rect.position.x + radius, rect.position.y + rect.size.y - radius - 1),
+				Vector2(rect.position.x + rect.size.x - radius - 1, rect.position.y + rect.size.y - radius - 1)
+			]:
+				var in_corner_x: bool = abs(p.x - corner.x) > rect.size.x * 0.5 - radius
+				var in_corner_y: bool = abs(p.y - corner.y) > rect.size.y * 0.5 - radius
+				if in_corner_x and in_corner_y and p.distance_to(corner) > radius:
+					inside = false
+			if not inside:
+				continue
+			var near_edge := x < rect.position.x + border_width or y < rect.position.y + border_width or x >= rect.position.x + rect.size.x - border_width or y >= rect.position.y + rect.size.y - border_width
+			image.set_pixel(x, y, border if near_edge else fill)
+
+
+func _draw_line_to_image(image: Image, start: Vector2, end: Vector2, color: Color, radius: int) -> void:
+	var steps: int = max(1, int(start.distance_to(end)))
+	for i in steps + 1:
+		var t := float(i) / float(steps)
+		_draw_disc(image, start.lerp(end, t), radius, color)
+
+
+func _draw_chain_band(image: Image, start: Vector2, end: Vector2, color: Color, radius: int = 4) -> void:
+	var steps: int = max(1, int(start.distance_to(end)))
+	for i in steps + 1:
+		var t := float(i) / float(steps)
+		_draw_disc(image, start.lerp(end, t), radius, color)
 
 
 func _draw_disc(image: Image, center: Vector2, radius: int, color: Color) -> void:
@@ -4470,7 +6307,7 @@ func _draw_backdrop(backdrop: Control) -> void:
 	backdrop.draw_circle(goal_center + Vector2(-4, -4), 6, Color(1, 1, 1, 0.42))
 	backdrop.draw_circle(goal_center, 13, Color.WHITE, false, 2.0)
 	var board_rect := Rect2(board_origin - Vector2(9, 9), board_size + Vector2(18, 18))
-	_draw_aligned_board_frame(backdrop, board_rect)
+	_draw_playable_board_outline(backdrop)
 	var inner_board := Rect2(board_origin + Vector2(BOARD_PADDING, BOARD_PADDING), Vector2(
 		BOARD_COLS * TILE_SIZE + (BOARD_COLS - 1) * TILE_GAP,
 		BOARD_ROWS * TILE_SIZE + (BOARD_ROWS - 1) * TILE_GAP
@@ -4478,9 +6315,7 @@ func _draw_backdrop(backdrop: Control) -> void:
 	for row in BOARD_ROWS:
 		for col in BOARD_COLS:
 			var cell_rect := Rect2(inner_board.position + Vector2(col * (TILE_SIZE + TILE_GAP), row * (TILE_SIZE + TILE_GAP)), Vector2(TILE_SIZE, TILE_SIZE))
-			if not _terrain_allows_tile(Vector2i(col, row)):
-				_draw_round_box(backdrop, cell_rect, Color(0.40, 0.25, 0.20, 0.34), Color(0.18, 0.10, 0.08, 0.24), 4, 1)
-			else:
+			if _terrain_allows_tile(Vector2i(col, row)):
 				var cell_color := Color("#ffdca8") if (row + col) % 2 == 0 else Color("#ffe7bf")
 				_draw_round_box(backdrop, cell_rect, cell_color, Color(1, 1, 1, 0.24), 4, 1)
 	_draw_soft_panel(backdrop, Rect2(Vector2(18, 704), Vector2(412, 198)), Color("#fff7df"), Color("#e9a35d"))
@@ -4501,6 +6336,39 @@ func _draw_aligned_board_frame(canvas: CanvasItem, rect: Rect2) -> void:
 	_draw_round_box(canvas, shine_top, Color(1, 1, 1, 0.26), Color(0, 0, 0, 0), 5, 0)
 	var shine_left := Rect2(rect.position + Vector2(8, 18), Vector2(9, rect.size.y - 36))
 	_draw_round_box(canvas, shine_left, Color(1, 1, 1, 0.18), Color(0, 0, 0, 0), 5, 0)
+
+
+func _draw_playable_board_outline(canvas: CanvasItem) -> void:
+	var edge_color := Color("#ff7da3")
+	var edge_light := Color("#ffd4e0")
+	var edge_shadow := Color(0.49, 0.25, 0.15, 0.22)
+	var pitch := TILE_SIZE + TILE_GAP
+	var origin := board_origin + Vector2(BOARD_PADDING, BOARD_PADDING)
+	for row in BOARD_ROWS:
+		for col in BOARD_COLS:
+			var cell := Vector2i(col, row)
+			if not _terrain_allows_tile(cell):
+				continue
+			var top_left := origin + Vector2(col * pitch, row * pitch)
+			var top_right := top_left + Vector2(TILE_SIZE, 0)
+			var bottom_left := top_left + Vector2(0, TILE_SIZE)
+			var bottom_right := top_left + Vector2(TILE_SIZE, TILE_SIZE)
+			_draw_playable_edge(canvas, cell, Vector2i.UP, top_left, top_right, edge_shadow, 13.0)
+			_draw_playable_edge(canvas, cell, Vector2i.DOWN, bottom_left, bottom_right, edge_shadow, 13.0)
+			_draw_playable_edge(canvas, cell, Vector2i.LEFT, top_left, bottom_left, edge_shadow, 13.0)
+			_draw_playable_edge(canvas, cell, Vector2i.RIGHT, top_right, bottom_right, edge_shadow, 13.0)
+			_draw_playable_edge(canvas, cell, Vector2i.UP, top_left, top_right, edge_color, 8.0)
+			_draw_playable_edge(canvas, cell, Vector2i.DOWN, bottom_left, bottom_right, edge_color, 8.0)
+			_draw_playable_edge(canvas, cell, Vector2i.LEFT, top_left, bottom_left, edge_color, 8.0)
+			_draw_playable_edge(canvas, cell, Vector2i.RIGHT, top_right, bottom_right, edge_color, 8.0)
+			_draw_playable_edge(canvas, cell, Vector2i.UP, top_left, top_right, edge_light, 2.0)
+			_draw_playable_edge(canvas, cell, Vector2i.LEFT, top_left, bottom_left, edge_light, 2.0)
+
+
+func _draw_playable_edge(canvas: CanvasItem, cell: Vector2i, dir: Vector2i, start: Vector2, end: Vector2, color: Color, width: float) -> void:
+	if _terrain_allows_tile(cell + dir):
+		return
+	canvas.draw_line(start, end, color, width)
 
 
 func _draw_prize_orb(holder: Control) -> void:
